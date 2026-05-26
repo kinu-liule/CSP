@@ -767,10 +767,47 @@ services:
     networks:
       - cybersec-network
 
+  # Prometheus
+  prometheus:
+    platform: linux/amd64
+    image: prom/prometheus:v2.53.0
+    container_name: cybersec-prometheus
+    ports:
+      - "9091:9090"
+    volumes:
+      - ./deploy/prometheus/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus_data:/prometheus
+    depends_on:
+      - api-gateway
+    networks:
+      - cybersec-network
+
+  # Grafana
+  grafana:
+    platform: linux/amd64
+    image: grafana/grafana:11.1.0
+    container_name: cybersec-grafana
+    ports:
+      - "3002:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin123
+      - GF_INSTALL_PLUGINS=
+    volumes:
+      - ./deploy/grafana/datasources:/etc/grafana/provisioning/datasources:ro
+      - ./deploy/grafana/dashboards:/etc/grafana/provisioning/dashboards:ro
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - prometheus
+    networks:
+      - cybersec-network
+
 volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
+  prometheus_data:
+  grafana_data:
 
 
 networks:
