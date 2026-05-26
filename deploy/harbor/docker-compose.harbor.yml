@@ -1,0 +1,134 @@
+services:
+  harbor-postgres:
+    platform: linux/amd64
+    image: postgres:16-alpine
+    container_name: cybersec-harbor-db
+    environment:
+      POSTGRES_DB: harbor
+      POSTGRES_USER: harbor
+      POSTGRES_PASSWORD: securepassword
+    volumes:
+      - harbor_db_data:/var/lib/postgresql/data
+    networks:
+      - cybersec-network
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "harbor"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  harbor-redis:
+    platform: linux/amd64
+    image: redis:7-alpine
+    container_name: cybersec-harbor-redis
+    volumes:
+      - harbor_redis_data:/data
+    networks:
+      - cybersec-network
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  harbor-registry:
+    platform: linux/amd64
+    image: goharbor/registry-photon:v2.11.0
+    container_name: cybersec-harbor-registry
+    volumes:
+      - harbor_registry_data:/storage
+    environment:
+      - REGISTRY_HTTP_ADDR=0.0.0.0:5000
+    networks:
+      - cybersec-network
+
+  harbor-core:
+    platform: linux/amd64
+    image: goharbor/harbor-core:v2.11.0
+    container_name: cybersec-harbor-core
+    ports:
+      - "8445:8443"
+    environment:
+      - CORE_SECRET=super-secret-core-key
+      - JOBSERVICE_SECRET=super-secret-jobservice-key
+      - REGISTRY_URL=http://harbor-registry:5000
+      - POSTGRESQL_HOST=harbor-postgres
+      - POSTGRESQL_DATABASE=harbor
+      - POSTGRESQL_USERNAME=harbor
+      - POSTGRESQL_PASSWORD=securepassword
+      - REDIS_URL=redis://harbor-redis:6379
+      - ADMINSERVER_URL=http://harbor-adminserver:8080
+    depends_on:
+      harbor-postgres:
+        condition: service_healthy
+    networks:
+      - cybersec-network
+
+  harbor-adminserver:
+    platform: linux/amd64
+    image: goharbor/harbor-adminserver:v2.11.0
+    container_name: cybersec-harbor-adminserver
+    environment:
+      - CORE_SECRET=super-secret-core-key
+      - POSTGRESQL_HOST=harbor-postgres
+      - POSTGRESQL_DATABASE=harbor
+      - POSTGRESQL_USERNAME=harbor
+      - POSTGRESQL_PASSWORD=securepassword
+    depends_on:
+      harbor-postgres:
+        condition: service_healthy
+    networks:
+      - cybersec-network
+
+  harbor-jobservice:
+    platform: linux/amd64
+    image: goharbor/harbor-jobservice:v2.11.0
+    container_name: cybersec-harbor-jobservice
+    environment:
+      - CORE_SECRET=super-secret-core-key
+      - JOBSERVICE_SECRET=super-secret-jobservice-key
+      - REGISTRY_URL=http://harbor-registry:5000
+      - REDIS_URL=redis://harbor-redis:6379
+      - POSTGRESQL_HOST=harbor-postgres
+      - POSTGRESQL_DATABASE=harbor
+      - POSTGRESQL_USERNAME=harbor
+      - POSTGRESQL_PASSWORD=securepassword
+    depends_on:
+      harbor-core:
+        condition: service_started
+    networks:
+      - cybersec-network
+
+  harbor-portal:
+    platform: linux/amd64
+    image: goharbor/harbor-portal:v2.11.0
+    container_name: cybersec-harbor-portal
+    depends_on:
+      - harbor-core
+    networks:
+      - cybersec-network
+
+  harbor-nginx:
+    platform: linux/amd64
+    image: goharbor/nginx-photon:v2.11.0
+    container_name: cybersec-harbor-nginx
+    ports:
+      - "8446:8443"
+    volumes:
+      - harbor_nginx_config:/etc/nginx
+    depends_on:
+      - harbor-core
+      - harbor-registry
+      - harbor-portal
+    networks:
+      - cybersec-network
+
+volumes:
+  harbor_db_data:
+  harbor_redis_data:
+  harbor_registry_data:
+  harbor_nginx_config:
+
+networks:
+  cybersec-network:
+    external: true

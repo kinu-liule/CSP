@@ -802,12 +802,303 @@ services:
     networks:
       - cybersec-network
 
+  # ─── ELK Stack ─────────────────────────────────────
+  elasticsearch:
+    platform: linux/amd64
+    image: docker.elastic.co/elasticsearch/elasticsearch:8.14.0
+    container_name: cybersec-elasticsearch
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - ES_JAVA_OPTS=-Xms1g -Xmx1g
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    networks:
+      - cybersec-network
+
+  logstash:
+    platform: linux/amd64
+    image: docker.elastic.co/logstash/logstash:8.14.0
+    container_name: cybersec-logstash
+    ports:
+      - "5044:5044"
+      - "5000:5000"
+      - "9600:9600"
+    volumes:
+      - ./deploy/logstash/logstash.conf:/usr/share/logstash/pipeline/logstash.conf:ro
+    environment:
+      - LS_JAVA_OPTS=-Xms256m -Xmx256m
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - cybersec-network
+
+  kibana:
+    platform: linux/amd64
+    image: docker.elastic.co/kibana/kibana:8.14.0
+    container_name: cybersec-kibana
+    ports:
+      - "5601:5601"
+    environment:
+      - ELASTICSEARCH_HOSTS=http://elasticsearch:9200
+    depends_on:
+      elasticsearch:
+        condition: service_healthy
+    networks:
+      - cybersec-network
+
+  filebeat:
+    platform: linux/amd64
+    image: docker.elastic.co/beats/filebeat:8.14.0
+    container_name: cybersec-filebeat
+    user: root
+    volumes:
+      - ./deploy/filebeat/filebeat.yml:/usr/share/filebeat/filebeat.yml:ro
+      - /var/run/docker.sock:/var/run/docker.sock:ro
+    depends_on:
+      - logstash
+    networks:
+      - cybersec-network
+
+  # ─── HashiCorp Vault ───────────────────────────────
+  vault:
+    platform: linux/amd64
+    image: hashicorp/vault:1.17.0
+    container_name: cybersec-vault
+    ports:
+      - "8200:8200"
+    cap_add:
+      - IPC_LOCK
+    environment:
+      - VAULT_DEV_ROOT_TOKEN_ID=cybersec-root-token
+      - VAULT_DEV_LISTEN_ADDRESS=0.0.0.0:8200
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://localhost:8200/v1/sys/health"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cybersec-network
+
+  vault-init:
+    platform: linux/amd64
+    image: hashicorp/vault:1.17.0
+    container_name: cybersec-vault-init
+    depends_on:
+      vault:
+        condition: service_healthy
+    entrypoint:
+      - /bin/sh
+      - -c
+      - |
+        export VAULT_ADDR=http://vault:8200
+        export VAULT_TOKEN=cybersec-root-token
+        vault secrets enable -path=cybersec kv-v2 || true
+        vault kv put cybersec/database username=cybersec password=securepassword
+        vault kv put cybersec/jwt secret=super-secret-jwt-key-change-in-production
+        vault kv put cybersec/rabbitmq username=cybersec password=securepassword
+        echo "Vault seeded successfully"
+    networks:
+      - cybersec-network
+
+  # ─── MinIO (S3-compatible storage) ─────────────────
+  minio:
+    platform: linux/amd64
+    image: quay.io/minio/minio:RELEASE.2024-07-16T23-46-41Z
+    container_name: cybersec-minio
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    environment:
+      - MINIO_ROOT_USER=cybersec
+      - MINIO_ROOT_PASSWORD=securepassword
+    volumes:
+      - minio_data:/data
+    command: server /data --console-address ":9001"
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:9000/minio/health/live"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - cybersec-network
+
+  # ─── Trivy Vulnerability Scanner (server mode) ─────
+  trivy:
+    platform: linux/amd64
+    image: aquasec/trivy:0.53.0
+    container_name: cybersec-trivy
+    ports:
+      - "8080:8080"
+    command: server --listen 0.0.0.0:8080
+    volumes:
+      - trivy_cache:/root/.cache/trivy
+    healthcheck:
+      test: ["CMD", "trivy", "health"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # ─── Nginx Proxy Manager ──────────────────────────
+  nginx-proxy-manager:
+    platform: linux/amd64
+    image: jc21/nginx-proxy-manager:2.11.3
+    container_name: cybersec-nginx-proxy-mgr
+    ports:
+      - "81:81"
+      - "8180:8180"
+      - "8443:8443"
+    volumes:
+      - nginx_proxy_data:/data
+      - nginx_proxy_letsencrypt:/etc/letsencrypt
+    depends_on:
+      - api-gateway
+    networks:
+      - cybersec-network
+
+  # ─── Wazuh SIEM/XDR ───────────────────────────────
+  wazuh-indexer:
+    platform: linux/amd64
+    image: wazuh/wazuh-indexer:4.9.0
+    container_name: cybersec-wazuh-indexer
+    ports:
+      - "9201:9200"
+    environment:
+      - discovery.type=single-node
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+    volumes:
+      - wazuh_indexer_data:/var/lib/elasticsearch
+    healthcheck:
+      test: ["CMD", "curl", "-f", "-k", "https://localhost:9200/_cluster/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 10
+    networks:
+      - cybersec-network
+
+  wazuh-manager:
+    platform: linux/amd64
+    image: wazuh/wazuh-manager:4.9.0
+    container_name: cybersec-wazuh-manager
+    ports:
+      - "55000:55000"
+      - "1514:1514"
+      - "1515:1515"
+      - "1516:1516"
+    volumes:
+      - wazuh_manager_data:/var/ossec
+    depends_on:
+      wazuh-indexer:
+        condition: service_healthy
+    networks:
+      - cybersec-network
+
+  wazuh-dashboard:
+    platform: linux/amd64
+    image: wazuh/wazuh-dashboard:4.9.0
+    container_name: cybersec-wazuh-dashboard
+    ports:
+      - "443:443"
+    environment:
+      - INDEXER_URL=https://wazuh-indexer:9200
+      - DASHBOARD_USERNAME=admin
+      - DASHBOARD_PASSWORD=admin123
+    depends_on:
+      wazuh-indexer:
+        condition: service_healthy
+      wazuh-manager:
+        condition: service_started
+    networks:
+      - cybersec-network
+
+  # ─── MISP Threat Intelligence ──────────────────────
+  misp-db:
+    platform: linux/amd64
+    image: mysql:8.0
+    container_name: cybersec-misp-db
+    environment:
+      - MYSQL_DATABASE=misp
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=securepassword
+      - MYSQL_ROOT_PASSWORD=rootpassword
+    volumes:
+      - misp_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cybersec-network
+
+  misp-redis:
+    platform: linux/amd64
+    image: redis:7-alpine
+    container_name: cybersec-misp-redis
+    volumes:
+      - misp_redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cybersec-network
+
+  misp:
+    platform: linux/amd64
+    image: harvarditsecurity/misp:2.4.195
+    container_name: cybersec-misp
+    ports:
+      - "8082:80"
+      - "8444:443"
+    environment:
+      - MYSQL_HOST=misp-db
+      - MYSQL_DATABASE=misp
+      - MYSQL_USER=misp
+      - MYSQL_PASSWORD=securepassword
+      - MYSQL_PORT=3306
+      - REDIS_FQDN=misp-redis
+      - BASE_URL=http://localhost:8082
+      - ADMIN_EMAIL=admin@cybersec.local
+      - ADMIN_PASSWORD=admin123
+    volumes:
+      - misp_data:/var/www/MISP
+    depends_on:
+      misp-db:
+        condition: service_healthy
+      misp-redis:
+        condition: service_healthy
+    networks:
+      - cybersec-network
+
 volumes:
   postgres_data:
   redis_data:
   rabbitmq_data:
   prometheus_data:
   grafana_data:
+  elasticsearch_data:
+  minio_data:
+  trivy_cache:
+  nginx_proxy_data:
+  nginx_proxy_letsencrypt:
+  wazuh_indexer_data:
+  wazuh_manager_data:
+  misp_mysql_data:
+  misp_redis_data:
+  misp_data:
 
 
 networks:
