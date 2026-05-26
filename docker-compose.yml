@@ -1058,7 +1058,7 @@ services:
 
   misp:
     platform: linux/amd64
-    image: harvarditsecurity/misp:2.4.195
+    image: harvarditsecurity/misp:latest
     container_name: cybersec-misp
     ports:
       - "8082:80"
