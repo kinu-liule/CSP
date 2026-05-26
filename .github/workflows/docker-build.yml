@@ -76,7 +76,7 @@ jobs:
             siem-soar)            ctx="siem-soar-service";;
             vuln-scanner)         ctx="vuln-scanner-service";;
             fraud-detection)      ctx="fraud-detection-service";;
-            awareness)            ctx="awareness-platform";;
+            awareness)            ctx="awareness-service";;
             grc)                  ctx="grc-service";;
             risk-engine)          ctx="risk-engine";;
             asset-management)     ctx="asset-management-service";;

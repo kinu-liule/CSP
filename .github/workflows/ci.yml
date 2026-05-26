@@ -103,7 +103,7 @@ jobs:
       - run: sleep 15
       - name: Health Checks
         run: |
-          services=("postgres" "redis" "rabbitmq" "api-gateway" "iam" "waf" "ngfw" "siem-soar" "vuln-scanner" "fraud-detection" "grc" "risk-engine" "frontend")
+          services=("postgres" "redis" "rabbitmq" "api-gateway" "iam" "waf" "ngfw" "siem-soar" "vuln-scanner" "fraud-detection" "awareness" "grc" "risk-engine" "asset-management" "cspm" "edr" "threat-intel" "soar" "data-security" "data-lake" "xdr" "devsecops" "deception" "password-manager" "business-continuity" "frontend")
           for svc in "${services[@]}"; do
             container="cybersec-${svc}"
             if docker ps --format '{{.Names}}' | grep -q "$container"; then
