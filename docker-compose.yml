@@ -788,7 +788,7 @@ services:
     image: grafana/grafana:11.1.0
     container_name: cybersec-grafana
     ports:
-      - "3002:3000"
+      - "3200:3000"
     environment:
       - GF_SECURITY_ADMIN_USER=admin
       - GF_SECURITY_ADMIN_PASSWORD=admin123
