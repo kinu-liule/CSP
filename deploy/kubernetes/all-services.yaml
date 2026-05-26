@@ -1,3 +1,63 @@
+# WAF Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: waf
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: waf
+  template:
+    metadata:
+      labels:
+        app: waf
+    spec:
+      containers:
+      - name: waf
+        image: ghcr.io/kinu-liule/csp/waf:latest
+        ports:
+        - containerPort: 3001
+        env:
+        - name: PORT
+          value: "3001"
+        - name: RABBITMQ_URL
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: RABBITMQ_URL
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3001
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: waf
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3001
+    targetPort: 3001
+  selector:
+    app: waf
+---
+# NGFW Service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -15,15 +75,48 @@ spec:
     spec:
       containers:
       - name: ngfw
-        image: cybersec/ngfw:latest
+        image: ghcr.io/kinu-liule/csp/ngfw:latest
         ports:
         - containerPort: 3002
         env:
         - name: PORT
           value: "3002"
         - name: RABBITMQ_URL
-          value: "amqp://rabbitmq:5672"
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: RABBITMQ_URL
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3002
+          initialDelaySeconds: 10
+          periodSeconds: 5
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: ngfw
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3002
+    targetPort: 3002
+  selector:
+    app: ngfw
+---
+# SIEM-SOAR Service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -41,15 +134,48 @@ spec:
     spec:
       containers:
       - name: siem-soar
-        image: cybersec/siem-soar:latest
+        image: ghcr.io/kinu-liule/csp/siem-soar:latest
         ports:
         - containerPort: 3003
         env:
         - name: PORT
           value: "3003"
         - name: RABBITMQ_URL
-          value: "amqp://rabbitmq:5672"
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: RABBITMQ_URL
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3003
+          initialDelaySeconds: 10
+          periodSeconds: 5
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: siem-soar
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3003
+    targetPort: 3003
+  selector:
+    app: siem-soar
+---
+# Vuln Scanner Service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -67,15 +193,68 @@ spec:
     spec:
       containers:
       - name: vuln-scanner
-        image: cybersec/vuln-scanner:latest
+        image: ghcr.io/kinu-liule/csp/vuln-scanner:latest
         ports:
         - containerPort: 3004
         env:
         - name: PORT
           value: "3004"
-        - name: RABBITMQ_URL
-          value: "amqp://rabbitmq:5672"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3004
+          initialDelaySeconds: 10
+          periodSeconds: 5
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: vuln-scanner
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3004
+    targetPort: 3004
+  selector:
+    app: vuln-scanner
+---
+# Fraud Detection Service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -93,15 +272,68 @@ spec:
     spec:
       containers:
       - name: fraud-detection
-        image: cybersec/fraud-detection:latest
+        image: ghcr.io/kinu-liule/csp/fraud-detection:latest
         ports:
         - containerPort: 3005
         env:
         - name: PORT
           value: "3005"
-        - name: RABBITMQ_URL
-          value: "amqp://rabbitmq:5672"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3005
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3005
+          initialDelaySeconds: 10
+          periodSeconds: 5
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: fraud-detection
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3005
+    targetPort: 3005
+  selector:
+    app: fraud-detection
+---
+# Awareness Service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -119,15 +351,68 @@ spec:
     spec:
       containers:
       - name: awareness
-        image: cybersec/awareness:latest
+        image: ghcr.io/kinu-liule/csp/awareness:latest
         ports:
         - containerPort: 3006
         env:
         - name: PORT
           value: "3006"
-        - name: RABBITMQ_URL
-          value: "amqp://rabbitmq:5672"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3006
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3006
+          initialDelaySeconds: 10
+          periodSeconds: 5
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: awareness
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3006
+    targetPort: 3006
+  selector:
+    app: awareness
+---
+# GRC Service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -145,15 +430,68 @@ spec:
     spec:
       containers:
       - name: grc
-        image: cybersec/grc:latest
+        image: ghcr.io/kinu-liule/csp/grc:latest
         ports:
         - containerPort: 3007
         env:
         - name: PORT
           value: "3007"
-        - name: RABBITMQ_URL
-          value: "amqp://rabbitmq:5672"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3007
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3007
+          initialDelaySeconds: 10
+          periodSeconds: 5
 ---
+apiVersion: v1
+kind: Service
+metadata:
+  name: grc
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3007
+    targetPort: 3007
+  selector:
+    app: grc
+---
+# IAM Service
 apiVersion: apps/v1
 kind: Deployment
 metadata:
@@ -171,30 +509,1090 @@ spec:
     spec:
       containers:
       - name: iam
-        image: cybersec/iam:latest
+        image: ghcr.io/kinu-liule/csp/iam:latest
         ports:
         - containerPort: 3008
         env:
         - name: PORT
           value: "3008"
-        - name: RABBITMQ_URL
-          value: "amqp://rabbitmq:5672"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
         - name: JWT_SECRET
           valueFrom:
             secretKeyRef:
               name: cybersec-secrets
               key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3008
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3008
+          initialDelaySeconds: 10
+          periodSeconds: 5
 ---
 apiVersion: v1
-kind: Namespace
+kind: Service
 metadata:
-  name: cybersec
----
-apiVersion: v1
-kind: Secret
-metadata:
-  name: cybersec-secrets
+  name: iam
   namespace: cybersec
-type: Opaque
-data:
-  jwt-secret: eW91ci1zZWNyZXQta2V5LWNoYW5nZS1tZQ==
+spec:
+  ports:
+  - port: 3008
+    targetPort: 3008
+  selector:
+    app: iam
+---
+# Asset Management Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: asset-management
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: asset-management
+  template:
+    metadata:
+      labels:
+        app: asset-management
+    spec:
+      containers:
+      - name: asset-management
+        image: ghcr.io/kinu-liule/csp/asset-management:latest
+        ports:
+        - containerPort: 3009
+        env:
+        - name: PORT
+          value: "3009"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3009
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3009
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: asset-management
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3009
+    targetPort: 3009
+  selector:
+    app: asset-management
+---
+# Risk Engine
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: risk-engine
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: risk-engine
+  template:
+    metadata:
+      labels:
+        app: risk-engine
+    spec:
+      containers:
+      - name: risk-engine
+        image: ghcr.io/kinu-liule/csp/risk-engine:latest
+        ports:
+        - containerPort: 3010
+        env:
+        - name: PORT
+          value: "3010"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3010
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3010
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: risk-engine
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3010
+    targetPort: 3010
+  selector:
+    app: risk-engine
+---
+# CSPM Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: cspm
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: cspm
+  template:
+    metadata:
+      labels:
+        app: cspm
+    spec:
+      containers:
+      - name: cspm
+        image: ghcr.io/kinu-liule/csp/cspm:latest
+        ports:
+        - containerPort: 3011
+        env:
+        - name: PORT
+          value: "3011"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3011
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3011
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: cspm
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3011
+    targetPort: 3011
+  selector:
+    app: cspm
+---
+# Data Security Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-security
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: data-security
+  template:
+    metadata:
+      labels:
+        app: data-security
+    spec:
+      containers:
+      - name: data-security
+        image: ghcr.io/kinu-liule/csp/data-security:latest
+        ports:
+        - containerPort: 3012
+        env:
+        - name: PORT
+          value: "3012"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3012
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3012
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-security
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3012
+    targetPort: 3012
+  selector:
+    app: data-security
+---
+# Business Continuity Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: business-continuity
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: business-continuity
+  template:
+    metadata:
+      labels:
+        app: business-continuity
+    spec:
+      containers:
+      - name: business-continuity
+        image: ghcr.io/kinu-liule/csp/business-continuity:latest
+        ports:
+        - containerPort: 3013
+        env:
+        - name: PORT
+          value: "3013"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3013
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3013
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: business-continuity
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3013
+    targetPort: 3013
+  selector:
+    app: business-continuity
+---
+# Deception Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deception
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: deception
+  template:
+    metadata:
+      labels:
+        app: deception
+    spec:
+      containers:
+      - name: deception
+        image: ghcr.io/kinu-liule/csp/deception:latest
+        ports:
+        - containerPort: 3014
+        env:
+        - name: PORT
+          value: "3014"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3014
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3014
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deception
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3014
+    targetPort: 3014
+  selector:
+    app: deception
+---
+# EDR Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: edr
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: edr
+  template:
+    metadata:
+      labels:
+        app: edr
+    spec:
+      containers:
+      - name: edr
+        image: ghcr.io/kinu-liule/csp/edr:latest
+        ports:
+        - containerPort: 3015
+        env:
+        - name: PORT
+          value: "3015"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3015
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3015
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: edr
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3015
+    targetPort: 3015
+  selector:
+    app: edr
+---
+# Password Manager Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: password-manager
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: password-manager
+  template:
+    metadata:
+      labels:
+        app: password-manager
+    spec:
+      containers:
+      - name: password-manager
+        image: ghcr.io/kinu-liule/csp/password-manager:latest
+        ports:
+        - containerPort: 3016
+        env:
+        - name: PORT
+          value: "3016"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3016
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3016
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: password-manager
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3016
+    targetPort: 3016
+  selector:
+    app: password-manager
+---
+# Data Lake Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: data-lake
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: data-lake
+  template:
+    metadata:
+      labels:
+        app: data-lake
+    spec:
+      containers:
+      - name: data-lake
+        image: ghcr.io/kinu-liule/csp/data-lake:latest
+        ports:
+        - containerPort: 3017
+        env:
+        - name: PORT
+          value: "3017"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3017
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3017
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: data-lake
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3017
+    targetPort: 3017
+  selector:
+    app: data-lake
+---
+# SOAR Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: soar
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: soar
+  template:
+    metadata:
+      labels:
+        app: soar
+    spec:
+      containers:
+      - name: soar
+        image: ghcr.io/kinu-liule/csp/soar:latest
+        ports:
+        - containerPort: 3018
+        env:
+        - name: PORT
+          value: "3018"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3018
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3018
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: soar
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3018
+    targetPort: 3018
+  selector:
+    app: soar
+---
+# Threat Intel Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: threat-intel
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: threat-intel
+  template:
+    metadata:
+      labels:
+        app: threat-intel
+    spec:
+      containers:
+      - name: threat-intel
+        image: ghcr.io/kinu-liule/csp/threat-intel:latest
+        ports:
+        - containerPort: 3019
+        env:
+        - name: PORT
+          value: "3019"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3019
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3019
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: threat-intel
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3019
+    targetPort: 3019
+  selector:
+    app: threat-intel
+---
+# XDR Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: xdr
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: xdr
+  template:
+    metadata:
+      labels:
+        app: xdr
+    spec:
+      containers:
+      - name: xdr
+        image: ghcr.io/kinu-liule/csp/xdr:latest
+        ports:
+        - containerPort: 3020
+        env:
+        - name: PORT
+          value: "3020"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3020
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3020
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: xdr
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3020
+    targetPort: 3020
+  selector:
+    app: xdr
+---
+# DevSecOps Service
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: devsecops
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: devsecops
+  template:
+    metadata:
+      labels:
+        app: devsecops
+    spec:
+      containers:
+      - name: devsecops
+        image: ghcr.io/kinu-liule/csp/devsecops:latest
+        ports:
+        - containerPort: 3021
+        env:
+        - name: PORT
+          value: "3021"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 3021
+          initialDelaySeconds: 30
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 3021
+          initialDelaySeconds: 10
+          periodSeconds: 5
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: devsecops
+  namespace: cybersec
+spec:
+  ports:
+  - port: 3021
+    targetPort: 3021
+  selector:
+    app: devsecops

@@ -17,6 +17,7 @@
     "http-proxy-middleware": "^2.0.6",
     "jsonwebtoken": "^9.0.0",
     "pg": "^8.20.0",
+    "prom-client": "^15.0.0",
     "swagger-jsdoc": "^6.3.0",
     "swagger-ui-express": "^5.0.1"
   },

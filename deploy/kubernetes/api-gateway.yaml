@@ -4,7 +4,7 @@ metadata:
   name: api-gateway
   namespace: cybersec
 spec:
-  replicas: 2
+  replicas: 3
   selector:
     matchLabels:
       app: api-gateway
@@ -15,12 +15,98 @@ spec:
     spec:
       containers:
       - name: api-gateway
-        image: cybersec/api-gateway:latest
+        image: ghcr.io/kinu-liule/csp/api-gateway:latest
         ports:
         - containerPort: 3000
         env:
         - name: PORT
           value: "3000"
+        - name: NODE_ENV
+          value: "production"
+        - name: DB_HOST
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_HOST
+        - name: DB_PORT
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: DB_PORT
+        - name: DB_NAME
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_DB
+        - name: DB_USER
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: POSTGRES_USER
+        - name: DB_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: postgres-password
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+        - name: REDIS_URL
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: REDIS_URL
+        - name: RABBITMQ_URL
+          valueFrom:
+            configMapKeyRef:
+              name: cybersec-config
+              key: RABBITMQ_URL
+        - name: USE_HTTPS
+          value: "false"
+        - name: IAM_SERVICE_URL
+          value: http://iam:3008
+        - name: WAF_SERVICE_URL
+          value: http://waf:3001
+        - name: NGFW_SERVICE_URL
+          value: http://ngfw:3002
+        - name: SIEM_SOAR_SERVICE_URL
+          value: http://siem-soar:3003
+        - name: VULN_SCANNER_SERVICE_URL
+          value: http://vuln-scanner:3004
+        - name: FRAUD_DETECTION_SERVICE_URL
+          value: http://fraud-detection:3005
+        - name: AWARENESS_SERVICE_URL
+          value: http://awareness:3006
+        - name: GRC_SERVICE_URL
+          value: http://grc:3007
+        - name: ASSET_MANAGEMENT_URL
+          value: http://asset-management:3009
+        - name: CSPM_SERVICE_URL
+          value: http://cspm:3011
+        - name: EDR_SERVICE_URL
+          value: http://edr:3015
+        - name: THREAT_INTEL_URL
+          value: http://threat-intel:3019
+        - name: SOAR_SERVICE_URL
+          value: http://soar:3018
+        - name: DATA_SECURITY_URL
+          value: http://data-security:3012
+        - name: DATA_LAKE_URL
+          value: http://data-lake:3017
+        - name: XDR_SERVICE_URL
+          value: http://xdr:3020
+        - name: RISK_ENGINE_URL
+          value: http://risk-engine:3010
+        - name: DEVSEOPS_URL
+          value: http://devsecops:3021
+        - name: DECEPTION_URL
+          value: http://deception:3014
+        - name: PASSWORD_MANAGER_URL
+          value: http://password-manager:3016
+        - name: BUSINESS_CONTINUITY_URL
+          value: http://business-continuity:3013
         livenessProbe:
           httpGet:
             path: /health

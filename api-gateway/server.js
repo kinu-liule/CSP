@@ -114,6 +114,36 @@ const authenticateTenant = async (req, res, next) => {
   next();
 };
 
+// Prometheus metrics
+const promClient = require('prom-client');
+const collectDefaultMetrics = promClient.collectDefaultMetrics;
+collectDefaultMetrics({ timeout: 5000 });
+
+const httpRequestDuration = new promClient.Histogram({
+  name: 'http_request_duration_seconds',
+  help: 'Duration of HTTP requests in seconds',
+  labelNames: ['method', 'route', 'status_code'],
+  buckets: [0.01, 0.05, 0.1, 0.5, 1, 2, 5]
+});
+
+const httpRequestsTotal = new promClient.Counter({
+  name: 'http_requests_total',
+  help: 'Total number of HTTP requests',
+  labelNames: ['method', 'route', 'status_code']
+});
+
+// Middleware to track request metrics
+app.use((req, res, next) => {
+  const start = Date.now();
+  res.on('finish', () => {
+    const duration = (Date.now() - start) / 1000;
+    const route = req.route ? req.route.path : req.path;
+    httpRequestDuration.labels(req.method, route, res.statusCode).observe(duration);
+    httpRequestsTotal.labels(req.method, route, res.statusCode).inc();
+  });
+  next();
+});
+
 // Health check (before auth/security middleware)
 app.get('/health', (req, res) => {
   res.json({ status: 'healthy', service: 'api-gateway', version: '2.0.0' });
@@ -121,6 +151,11 @@ app.get('/health', (req, res) => {
 
 app.get('/api/health', (req, res) => {
   res.json({ status: 'healthy', service: 'api-gateway', version: '2.0.0' });
+});
+
+app.get('/metrics', async (req, res) => {
+  res.set('Content-Type', promClient.register.contentType);
+  res.end(await promClient.register.metrics());
 });
 
 // Swagger API Documentation
@@ -1053,7 +1088,24 @@ app.get('/api/admin/health', authorize('platform:health'), async (req, res) => {
       { name: 'iam', host: 'iam', port: 3008, path: '/health' },
       { name: 'waf', host: 'waf', port: 3001, path: '/health' },
       { name: 'ngfw', host: 'ngfw', port: 3002, path: '/health' },
-      { name: 'siem', host: 'siem', port: 3003, path: '/health' },
+      { name: 'siem-soar', host: 'siem-soar', port: 3003, path: '/health' },
+      { name: 'vuln-scanner', host: 'vuln-scanner', port: 3004, path: '/health' },
+      { name: 'fraud-detection', host: 'fraud-detection', port: 3005, path: '/health' },
+      { name: 'awareness', host: 'awareness', port: 3006, path: '/health' },
+      { name: 'grc', host: 'grc', port: 3007, path: '/health' },
+      { name: 'risk-engine', host: 'risk-engine', port: 3010, path: '/health' },
+      { name: 'asset-management', host: 'asset-management', port: 3009, path: '/health' },
+      { name: 'cspm', host: 'cspm', port: 3011, path: '/health' },
+      { name: 'edr', host: 'edr', port: 3015, path: '/health' },
+      { name: 'threat-intel', host: 'threat-intel', port: 3019, path: '/health' },
+      { name: 'soar', host: 'soar', port: 3018, path: '/health' },
+      { name: 'data-security', host: 'data-security', port: 3012, path: '/health' },
+      { name: 'data-lake', host: 'data-lake', port: 3017, path: '/health' },
+      { name: 'xdr', host: 'xdr', port: 3020, path: '/health' },
+      { name: 'devsecops', host: 'devsecops', port: 3021, path: '/health' },
+      { name: 'deception', host: 'deception', port: 3014, path: '/health' },
+      { name: 'password-manager', host: 'password-manager', port: 3016, path: '/health' },
+      { name: 'business-continuity', host: 'business-continuity', port: 3013, path: '/health' },
     ];
     const results = await Promise.all(serviceList.map(svc =>
       new Promise(resolve => {
