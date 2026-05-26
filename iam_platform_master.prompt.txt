@@ -1,0 +1,175 @@
+# IAM Platform (Identity & Access Management) - Master Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT (jsonwebtoken), bcryptjs, express-validator
+- Frontend: React 18, React Router 6, Bootstrap 5 (login/SSO UI)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+Central identity and access management service providing multi-tenant user provisioning, SSO (SAML 2.0, OIDC), RBAC/ABAC authorization, MFA (TOTP, SMS, Email), and integration with all platform services for unified identity across the cybersecurity platform.
+
+## 2. Core Requirements
+- Multi-tenant user management with roles (Admin, Analyst, User, Auditor)
+- SSO integration (SAML 2.0, OpenID Connect, OAuth 2.0)
+- Multi-factor authentication (TOTP via speakeasy, SMS, Email OTP)
+- Role-Based Access Control (RBAC) and Attribute-Based Access Control (ABAC)
+- Service-to-service authentication (mTLS, API keys)
+- User lifecycle management (provision, suspend, deprovision)
+- Integration with Password Manager for credential sync
+- Redis caching for sessions, JWT validation, user permissions
+- RabbitMQ event publishing for user lifecycle, permission changes, security alerts
+
+## 3. API Endpoints (routed via API Gateway: /api/iam/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| POST | /api/iam/auth/login | User login (JWT generation) | None (with credentials) |
+| POST | /api/iam/auth/mfa/setup | Setup MFA for user | JWT |
+| POST | /api/iam/auth/mfa/verify | Verify MFA token | JWT |
+| GET | /api/iam/users | List users (tenant-scoped) | Admin JWT |
+| POST | /api/iam/users | Create new user | Admin JWT |
+| GET | /api/iam/users/:id | Get user details | JWT (self or admin) |
+| PUT | /api/iam/users/:id | Update user | JWT (self or admin) |
+| DELETE | /api/iam/users/:id | Deactivate user | Admin JWT |
+| GET | /api/iam/roles | List roles and permissions | JWT/API Key |
+| POST | /api/iam/roles | Create custom role | Admin JWT |
+| GET | /api/iam/sso/config | Get SSO configuration | Admin JWT |
+| POST | /api/iam/sso/config | Update SSO config | Admin JWT |
+| POST | /api/iam/auth/refresh | Refresh JWT token | Valid refresh token |
+| GET | /api/iam/audit | Get access audit logs | Admin JWT |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE users (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  email VARCHAR(255) UNIQUE NOT NULL,
+  password_hash VARCHAR(255) NOT NULL, -- bcrypt hash
+  first_name VARCHAR(100),
+  last_name VARCHAR(100),
+  role VARCHAR(50) DEFAULT 'user', -- admin, analyst, user, auditor
+  mfa_enabled BOOLEAN DEFAULT false,
+  mfa_secret_encrypted TEXT, -- TOTP secret
+  status VARCHAR(20) DEFAULT 'active', -- active, suspended, deactivated
+  last_login TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE roles (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(100) NOT NULL,
+  permissions TEXT[] DEFAULT '{}', -- array of permission strings
+  is_system BOOLEAN DEFAULT false, -- system roles cannot be deleted
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE user_sessions (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id UUID REFERENCES users(id),
+  token_hash VARCHAR(255) NOT NULL,
+  ip_address INET,
+  user_agent TEXT,
+  expires_at TIMESTAMP NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE sso_configs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  provider VARCHAR(50), -- saml, oidc, oauth2
+  config_encrypted JSONB NOT NULL, -- encrypted SSO config (certificates, secrets)
+  enabled BOOLEAN DEFAULT true,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE user_audit (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id),
+  user_id UUID REFERENCES users(id),
+  action VARCHAR(100), -- login, logout, permission_change, mfa_setup
+  ip_address INET,
+  user_agent TEXT,
+  details JSONB,
+  timestamp TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_users_tenant ON users(tenant_id);
+CREATE INDEX idx_sessions_user ON user_sessions(user_id);
+```
+
+## 5. Service Integrations
+- Redis: Cache user sessions (TTL 1h), JWT blacklist, permission lookups, MFA attempts
+- RabbitMQ: Publish to `iam-events` queue (user.created, user.deactivated, permission.changed, mfa.enabled, sso.config_changed)
+- API Gateway: Validate all incoming JWTs, provide user context to downstream services
+- Password Manager: Sync password changes, SSO credentials
+- All Platform Services: Validate JWT tokens, get user context via API Gateway
+- IAM Service: Self-validation for tenant_id from JWT token
+
+## 6. Security Requirements
+- All endpoints protected by API Gateway OWASP policies
+- Tenant isolation: queries filtered by JWT tenant_id (except system admins)
+- Password hashing with bcrypt (cost factor 12+)
+- Encrypt MFA secrets and SSO configs at rest (AES-256)
+- Audit logging: all auth events and permission changes logged to `user_audit` and `request_logs`
+- Rate limiting on login endpoints (prevent brute force)
+- mTLS for service-to-service communication
+- JWT secret rotation support
+- Session management: strict timeout, single-session enforcement option
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3008
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3008/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block (matches existing iam-service)
+```yaml
+iam:
+  platform: linux/amd64
+  build:
+    context: ./iam-service
+    dockerfile: Dockerfile
+  container_name: cybersec-iam
+  ports:
+    - "3008:3008"
+  environment:
+    NODE_ENV: production
+    PORT: 3008
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    JWT_SECRET: super-secret-jwt-key-change-in-production
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    PASSWORD_MANAGER_URL: http://password-manager:3016
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3008/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for auth logic, RBAC/ABAC evaluation, MFA verification
+- Health check: `GET /health` returns 200
+- Test login: `POST /api/iam/auth/login` with valid credentials returns JWT
+- Test MFA flow: setup TOTP, verify token, access protected endpoint
+- Test tenant isolation: JWT from tenant A cannot access tenant B users
+- Test SSO: SAML/OIDC flow returns valid JWT
+- Align with platform `test-platform.js` script

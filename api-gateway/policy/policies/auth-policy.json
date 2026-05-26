@@ -1,0 +1,21 @@
+{
+  "id": "auth-policy",
+  "name": "Authentication Policy",
+  "description": "Require authentication for protected endpoints",
+  "priority": 2,
+  "rules": [
+    {
+      "condition": "request.path =~ /^/api/public/",
+      "action": "allow"
+    },
+    {
+      "condition": "request.path =~ /^/api//",
+      "action": "require_auth",
+      "parameters": {
+        "scopes": [
+          "read"
+        ]
+      }
+    }
+  ]
+}

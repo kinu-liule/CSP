@@ -1,0 +1,150 @@
+# SOAR Platform (Security Orchestration, Automation, and Response) - Master Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Chart.js (playbook dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+SOAR Platform for orchestrating security incident response through automated playbooks, integrating with SIEM, EDR, WAF, NGFW, and Threat Intel services to enable rapid threat containment and remediation.
+
+## 2. Core Requirements
+- Visual playbook designer with drag-and-drop interface
+- Pre-built playbook templates (malware containment, DDoS mitigation, phishing response)
+- Integration with SIEM for alert ingestion via RabbitMQ
+- Automated actions: block IPs (WAF/NGFW), isolate endpoints (EDR), update blocklists
+- Manual approval workflows for critical actions
+- Incident timeline tracking and audit trails
+- Redis caching for active playbooks and execution state (TTL 1h)
+- Integration with Threat Intel for enriched playbook decisions
+
+## 3. API Endpoints (routed via API Gateway: /api/soar/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| GET | /api/soar/playbooks | List playbooks | JWT/API Key |
+| POST | /api/soar/playbooks | Create playbook | Admin JWT |
+| GET | /api/soar/playbooks/:id | Get playbook details | JWT/API Key |
+| PUT | /api/soar/playbooks/:id | Update playbook | Admin JWT |
+| POST | /api/soar/execute | Execute playbook | JWT |
+| GET | /api/soar/incidents | List SOAR incidents | JWT/API Key |
+| PUT | /api/soar/incidents/:id | Update incident status | JWT |
+| GET | /api/soar/metrics | Get SOAR metrics | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE soar_playbooks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  trigger_conditions JSONB,
+  actions JSONB NOT NULL,
+  enabled BOOLEAN DEFAULT true,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE soar_incidents (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  alert_id UUID,
+  playbook_id UUID REFERENCES soar_playbooks(id),
+  status VARCHAR(20) DEFAULT 'new',
+  severity VARCHAR(20),
+  affected_assets TEXT[],
+  timeline JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE playbook_executions (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id),
+  playbook_id UUID REFERENCES soar_playbooks(id),
+  incident_id UUID REFERENCES soar_incidents(id),
+  status VARCHAR(20),
+  actions_executed JSONB,
+  started_at TIMESTAMP DEFAULT NOW(),
+  completed_at TIMESTAMP
+);
+
+CREATE INDEX idx_soar_incidents_tenant ON soar_incidents(tenant_id);
+```
+
+## 5. Service Integrations
+- Redis: Cache active playbooks, execution state (TTL 1h)
+- RabbitMQ: Consume from `siem-alerts`, publish to `soar-executions`
+- API Gateway: All endpoints routed through `/api/soar/*`
+- SIEM Service: Receive alerts for automated response
+- EDR Service: Trigger endpoint isolation, malware removal
+- WAF Service: Update blocklists, rate limiting rules
+- NGFW Service: Update firewall rules, geo-blocking
+- Threat Intel Service: Enrich IOCs for playbook decisions
+- XDR Service: Coordinate cross-layer response actions
+
+## 6. Security Requirements
+- Tenant isolation: queries filtered by JWT tenant_id
+- Encrypt sensitive playbook configurations at rest
+- Audit logging for all playbook executions
+- Manual approval for destructive actions (isolate endpoint, block IP range)
+- Rate limiting on playbook execution (max 10/minute per tenant)
+- mTLS for service-to-service communication
+- Role-based access control for playbook management
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3018
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3018/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block
+```yaml
+soar:
+  platform: linux/amd64
+  build:
+    context: ./soar-service
+    dockerfile: Dockerfile
+  container_name: cybersec-soar
+  ports:
+    - "3018:3018"
+  environment:
+    NODE_ENV: production
+    PORT: 3018
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    SIEM_SERVICE_URL: http://siem-soar:3003
+    EDR_SERVICE_URL: http://edr:3015
+    WAF_SERVICE_URL: http://waf:3001
+    NGFW_SERVICE_URL: http://ngfw:3002
+    THREAT_INTEL_URL: http://threat-intel:3019
+    XDR_SERVICE_URL: http://xdr:3020
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3018/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for playbook engine, action executor
+- Health check: `GET /health` returns 200
+- Test playbook creation: `POST /api/soar/playbooks` returns 201
+- Test playbook execution: `POST /api/soar/execute` triggers actions
+- Test tenant isolation: JWT from tenant A cannot access tenant B playbooks
+- Align with platform `test-platform.js` script

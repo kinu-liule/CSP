@@ -1,0 +1,200 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: ngfw
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: ngfw
+  template:
+    metadata:
+      labels:
+        app: ngfw
+    spec:
+      containers:
+      - name: ngfw
+        image: cybersec/ngfw:latest
+        ports:
+        - containerPort: 3002
+        env:
+        - name: PORT
+          value: "3002"
+        - name: RABBITMQ_URL
+          value: "amqp://rabbitmq:5672"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: siem-soar
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: siem-soar
+  template:
+    metadata:
+      labels:
+        app: siem-soar
+    spec:
+      containers:
+      - name: siem-soar
+        image: cybersec/siem-soar:latest
+        ports:
+        - containerPort: 3003
+        env:
+        - name: PORT
+          value: "3003"
+        - name: RABBITMQ_URL
+          value: "amqp://rabbitmq:5672"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: vuln-scanner
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: vuln-scanner
+  template:
+    metadata:
+      labels:
+        app: vuln-scanner
+    spec:
+      containers:
+      - name: vuln-scanner
+        image: cybersec/vuln-scanner:latest
+        ports:
+        - containerPort: 3004
+        env:
+        - name: PORT
+          value: "3004"
+        - name: RABBITMQ_URL
+          value: "amqp://rabbitmq:5672"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: fraud-detection
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: fraud-detection
+  template:
+    metadata:
+      labels:
+        app: fraud-detection
+    spec:
+      containers:
+      - name: fraud-detection
+        image: cybersec/fraud-detection:latest
+        ports:
+        - containerPort: 3005
+        env:
+        - name: PORT
+          value: "3005"
+        - name: RABBITMQ_URL
+          value: "amqp://rabbitmq:5672"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: awareness
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: awareness
+  template:
+    metadata:
+      labels:
+        app: awareness
+    spec:
+      containers:
+      - name: awareness
+        image: cybersec/awareness:latest
+        ports:
+        - containerPort: 3006
+        env:
+        - name: PORT
+          value: "3006"
+        - name: RABBITMQ_URL
+          value: "amqp://rabbitmq:5672"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: grc
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: grc
+  template:
+    metadata:
+      labels:
+        app: grc
+    spec:
+      containers:
+      - name: grc
+        image: cybersec/grc:latest
+        ports:
+        - containerPort: 3007
+        env:
+        - name: PORT
+          value: "3007"
+        - name: RABBITMQ_URL
+          value: "amqp://rabbitmq:5672"
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: iam
+  namespace: cybersec
+spec:
+  replicas: 2
+  selector:
+    matchLabels:
+      app: iam
+  template:
+    metadata:
+      labels:
+        app: iam
+    spec:
+      containers:
+      - name: iam
+        image: cybersec/iam:latest
+        ports:
+        - containerPort: 3008
+        env:
+        - name: PORT
+          value: "3008"
+        - name: RABBITMQ_URL
+          value: "amqp://rabbitmq:5672"
+        - name: JWT_SECRET
+          valueFrom:
+            secretKeyRef:
+              name: cybersec-secrets
+              key: jwt-secret
+---
+apiVersion: v1
+kind: Namespace
+metadata:
+  name: cybersec
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: cybersec-secrets
+  namespace: cybersec
+type: Opaque
+data:
+  jwt-secret: eW91ci1zZWNyZXQta2V5LWNoYW5nZS1tZQ==

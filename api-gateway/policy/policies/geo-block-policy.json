@@ -1,0 +1,16 @@
+{
+  "id": "geo-block-policy",
+  "name": "Geographic Block Policy",
+  "description": "Block requests from restricted countries",
+  "priority": 3,
+  "rules": [
+    {
+      "condition": "request.geo.country in [\"KP\", \"IR\", \"SY\"]",
+      "action": "deny",
+      "parameters": {
+        "status": 403,
+        "message": "Access from your region is restricted"
+      }
+    }
+  ]
+}

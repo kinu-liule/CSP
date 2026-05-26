@@ -1,0 +1,12 @@
+CREATE EXTENSION IF NOT EXISTS "uuid-ossp";
+CREATE TABLE IF NOT EXISTS tenants (
+    id VARCHAR(50) PRIMARY KEY,
+    name VARCHAR(255) NOT NULL
+);
+CREATE TABLE IF NOT EXISTS users (
+    id VARCHAR(50) PRIMARY KEY,
+    tenant_id VARCHAR(50) REFERENCES tenants(id),
+    email VARCHAR(255) NOT NULL UNIQUE
+);
+INSERT INTO tenants (id, name) VALUES ('tenant1', 'Default Tenant') ON CONFLICT (id) DO NOTHING;
+---

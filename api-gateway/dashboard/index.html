@@ -1,0 +1,412 @@
+<!DOCTYPE html>
+<html lang="en" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>API Gateway Pro - Dashboard</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: { extend: { colors: { cyber: { dark: '#0a0e27', card: '#1a1f3a', border: '#2a2f4a' } } } }
+    }
+  </script>
+  <style>
+    body { background: #0a0e27; color: #e2e8f0; font-family: 'Inter', system-ui, sans-serif; }
+    .glass { background: rgba(26, 31, 58, 0.8); backdrop-filter: blur(10px); }
+    .gradient-border { position: relative; }
+    .gradient-border::before { content: ''; position: absolute; inset: -1px; background: linear-gradient(45deg, #00ff41, #0080ff); border-radius: inherit; z-index: -1; opacity: 0.3; }
+  </style>
+</head>
+<body class="min-h-screen">
+  <!-- Navigation -->
+  <nav class="glass border-b border-cyber-border sticky top-0 z-50 px-6 py-4">
+    <div class="flex items-center justify-between max-w-7xl mx-auto">
+      <div class="flex items-center space-x-4">
+        <div class="w-10 h-10 bg-gradient-to-br from-green-400 to-blue-500 rounded-lg flex items-center justify-center">
+          <span class="text-white font-bold text-xl">G</span>
+        </div>
+        <div>
+          <h1 class="text-xl font-bold text-white">API Gateway Pro</h1>
+          <p class="text-xs text-gray-400">Security • Analytics • Management</p>
+        </div>
+      </div>
+      <div class="flex items-center space-x-4">
+        <span id="statusBadge" class="px-3 py-1 rounded-full text-xs font-medium bg-green-500/20 text-green-400 border border-green-500/30">HEALTHY</span>
+        <button onclick="refreshAll()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium transition">Refresh</button>
+      </div>
+    </div>
+  </nav>
+
+  <div class="max-w-7xl mx-auto px-6 py-8">
+    <!-- Metrics Cards -->
+    <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-6 mb-8">
+      <div class="glass rounded-xl p-6 border border-cyber-border gradient-border">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-gray-400 text-sm font-medium">TOTAL REQUESTS</span>
+          <svg class="w-8 h-8 text-blue-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 7h8m0 0v8m0-8l-8 8-4-4-6 6"></path></svg>
+        </div>
+        <div class="text-3xl font-bold text-white" id="metricRequests">0</div>
+        <p class="text-xs text-gray-400 mt-2">Last 24 hours</p>
+      </div>
+
+      <div class="glass rounded-xl p-6 border border-cyber-border gradient-border">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-gray-400 text-sm font-medium">ERRORS</span>
+          <svg class="w-8 h-8 text-red-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 9v2m0 4h.01m-6.938 4h13.856c1.54 0 2.502-1.667 1.732-3L13.732 4c-.77-1.333-2.694-1.333-3.464 0L3.34 16c-.77 1.333.192 3 1.732 3z"></path></svg>
+        </div>
+        <div class="text-3xl font-bold text-red-400" id="metricErrors">0</div>
+        <p class="text-xs text-gray-400 mt-2">Failed requests</p>
+      </div>
+
+      <div class="glass rounded-xl p-6 border border-cyber-border gradient-border">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-gray-400 text-sm font-medium">BLOCKED</span>
+          <svg class="w-8 h-8 text-yellow-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M18.364 18.364A9 9 0 005.636 5.636m12.728 12.728A9 9 0 015.636 5.636m12.728 12.728L5.636 5.636"></path></svg>
+        </div>
+        <div class="text-3xl font-bold text-yellow-400" id="metricBlocked">0</div>
+        <p class="text-xs text-gray-400 mt-2">Security blocks</p>
+      </div>
+
+      <div class="glass rounded-xl p-6 border border-cyber-border gradient-border">
+        <div class="flex items-center justify-between mb-4">
+          <span class="text-gray-400 text-sm font-medium">AVG RESPONSE</span>
+          <svg class="w-8 h-8 text-green-400" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M12 8v4l3 3m6-3a9 9 0 11-18 0 9 9 0 0118 0z"></path></svg>
+        </div>
+        <div class="text-3xl font-bold text-green-400" id="metricResponseTime">0ms</div>
+        <p class="text-xs text-gray-400 mt-2">Average latency</p>
+      </div>
+    </div>
+
+    <!-- Tabs -->
+    <div class="glass rounded-xl border border-cyber-border overflow-hidden">
+      <div class="border-b border-cyber-border">
+        <nav class="flex space-x-8 px-6" id="tabNav">
+          <button onclick="showTab('overview', event)" class="tab-btn py-4 px-2 border-b-2 border-blue-500 text-blue-400 font-medium text-sm">Overview</button>
+          <button onclick="showTab('tenants', event)" class="tab-btn py-4 px-2 border-b-2 border-transparent text-gray-400 hover:text-gray-300 font-medium text-sm">Tenants</button>
+          <button onclick="showTab('apikeys', event)" class="tab-btn py-4 px-2 border-b-2 border-transparent text-gray-400 hover:text-gray-300 font-medium text-sm">API Keys</button>
+          <button onclick="showTab('policies', event)" class="tab-btn py-4 px-2 border-b-2 border-transparent text-gray-400 hover:text-gray-300 font-medium text-sm">Policies</button>
+          <button onclick="showTab('security', event)" class="tab-btn py-4 px-2 border-b-2 border-transparent text-gray-400 hover:text-gray-300 font-medium text-sm">Security</button>
+        </nav>
+      </div>
+
+      <!-- Overview Tab -->
+      <div id="tab-overview" class="p-6">
+        <div class="grid grid-cols-1 lg:grid-cols-2 gap-6">
+          <div>
+            <h3 class="text-lg font-semibold mb-4">Top Endpoints</h3>
+            <div class="space-y-3" id="topEndpoints">
+              <p class="text-gray-400 text-sm">Loading...</p>
+            </div>
+          </div>
+          <div>
+            <h3 class="text-lg font-semibold mb-4">Top Tenants</h3>
+            <div class="space-y-3" id="topTenants">
+              <p class="text-gray-400 text-sm">Loading...</p>
+            </div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Tenants Tab -->
+      <div id="tab-tenants" class="p-6 hidden">
+        <div class="flex justify-between items-center mb-6">
+          <h3 class="text-lg font-semibold">Tenant Management</h3>
+          <button onclick="showCreateTenantModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ Add Tenant</button>
+        </div>
+        <div class="overflow-x-auto">
+          <table class="w-full">
+            <thead>
+              <tr class="border-b border-cyber-border">
+                <th class="text-left py-3 px-4 text-sm font-medium text-gray-400">ID</th>
+                <th class="text-left py-3 px-4 text-sm font-medium text-gray-400">Name</th>
+                <th class="text-left py-3 px-4 text-sm font-medium text-gray-400">Tier</th>
+                <th class="text-left py-3 px-4 text-sm font-medium text-gray-400">Status</th>
+                <th class="text-left py-3 px-4 text-sm font-medium text-gray-400">Actions</th>
+              </tr>
+            </thead>
+            <tbody id="tenantsTable"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <!-- API Keys Tab -->
+      <div id="tab-apikeys" class="p-6 hidden">
+        <div class="flex justify-between items-center mb-6">
+          <h3 class="text-lg font-semibold">API Keys</h3>
+          <button onclick="showCreateKeyModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ Generate Key</button>
+        </div>
+        <div id="apiKeysContent">
+          <p class="text-gray-400 text-sm">Select a tenant to view API keys</p>
+        </div>
+      </div>
+
+      <!-- Policies Tab -->
+      <div id="tab-policies" class="p-6 hidden">
+        <div class="flex justify-between items-center mb-6">
+          <h3 class="text-lg font-semibold">Security Policies</h3>
+          <button onclick="showCreatePolicyModal()" class="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">+ Add Policy</button>
+        </div>
+        <div class="space-y-4" id="policiesList"></div>
+      </div>
+
+      <!-- Security Tab -->
+      <div id="tab-security" class="p-6 hidden">
+        <h3 class="text-lg font-semibold mb-4">Recent Security Events</h3>
+        <div class="space-y-3" id="securityEvents"></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modals -->
+  <div id="createTenantModal" class="hidden fixed inset-0 bg-black/50 flex items-center justify-center z-50">
+    <div class="glass rounded-xl p-6 w-full max-w-md border border-cyber-border">
+      <h3 class="text-lg font-semibold mb-4">Create Tenant</h3>
+      <input id="tenantId" placeholder="Tenant ID" class="w-full mb-3 px-4 py-2 bg-cyber-dark border border-cyber-border rounded-lg text-white">
+      <input id="tenantName" placeholder="Name" class="w-full mb-3 px-4 py-2 bg-cyber-dark border border-cyber-border rounded-lg text-white">
+      <select id="tenantTier" class="w-full mb-4 px-4 py-2 bg-cyber-dark border border-cyber-border rounded-lg text-white">
+        <option value="free">Free</option>
+        <option value="premium">Premium</option>
+        <option value="enterprise">Enterprise</option>
+      </select>
+      <div class="flex space-x-3">
+        <button onclick="createTenant()" class="flex-1 px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-lg text-sm font-medium">Create</button>
+        <button onclick="hideModal('createTenantModal')" class="flex-1 px-4 py-2 bg-gray-600 hover:bg-gray-700 text-white rounded-lg text-sm font-medium">Cancel</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    const API_BASE = window.location.origin;
+    let currentTenantId = null;
+
+    // Tab navigation - fixed
+    function showTab(tab, event) {
+      // Hide all tabs
+      document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.add('hidden'));
+      // Show selected tab
+      const tabEl = document.getElementById('tab-' + tab);
+      if (tabEl) tabEl.classList.remove('hidden');
+      
+      // Update button styles
+      document.querySelectorAll('.tab-btn').forEach(btn => {
+        btn.classList.remove('border-blue-500', 'text-blue-400');
+        btn.classList.add('border-transparent', 'text-gray-400');
+      });
+      
+      // Highlight current tab button
+      if (event && event.target) {
+        event.target.classList.remove('border-transparent', 'text-gray-400');
+        event.target.classList.add('border-blue-500', 'text-blue-400');
+      }
+      
+      // Load tab content
+      if (tab === 'tenants') loadTenants();
+      if (tab === 'apikeys' && currentTenantId) loadApiKeys(currentTenantId);
+      if (tab === 'policies') loadPolicies();
+      if (tab === 'security') loadSecurityEvents();
+    }
+
+    // Load metrics
+    async function loadMetrics() {
+      try {
+        const res = await fetch('/api/analytics/metrics');
+        const data = await res.json();
+        const m = data.metrics || {};
+        document.getElementById('metricRequests').textContent = m.total_requests || 0;
+        document.getElementById('metricErrors').textContent = m.total_errors || 0;
+        document.getElementById('metricBlocked').textContent = m.total_blocked || 0;
+        document.getElementById('metricResponseTime').textContent = Math.round(m.avg_response_time || 0) + 'ms';
+        
+        // Top endpoints
+        const topEndpoints = document.getElementById('topEndpoints');
+        if (topEndpoints && data.topEndpoints && data.topEndpoints.length > 0) {
+          topEndpoints.innerHTML = data.topEndpoints.map(ep => `
+            <div class="flex items-center justify-between p-3 bg-cyber-dark rounded-lg">
+              <span class="text-sm font-mono">${ep.path || 'N/A'}</span>
+              <span class="text-sm text-blue-400">${ep.count || 0} req</span>
+            </div>
+          `).join('');
+        }
+        
+        // Top tenants
+        const topTenants = document.getElementById('topTenants');
+        if (topTenants && data.topTenants && data.topTenants.length > 0) {
+          topTenants.innerHTML = data.topTenants.map(t => `
+            <div class="flex items-center justify-between p-3 bg-cyber-dark rounded-lg cursor-pointer hover:bg-cyber-border" onclick="selectTenant('${t.tenant_id}')">
+              <span class="text-sm">${t.tenant_id}</span>
+              <span class="text-sm text-green-400">${t.requests || 0} req</span>
+            </div>
+          `).join('');
+        }
+      } catch (err) {
+        console.error('Failed to load metrics:', err);
+      }
+    }
+
+    // Tenant management
+    async function loadTenants() {
+      try {
+        const res = await fetch('/api/tenants');
+        const data = await res.json();
+        const tbody = document.getElementById('tenantsTable');
+        if (tbody && data.tenants) {
+          tbody.innerHTML = data.tenants.map(t => `
+            <tr class="border-b border-cyber-border hover:bg-cyber-dark/50">
+              <td class="py-3 px-4 text-sm">${t.tenant_id || 'N/A'}</td>
+              <td class="py-3 px-4 text-sm">${t.name || 'N/A'}</td>
+              <td class="py-3 px-4"><span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">${t.tier || 'free'}</span></td>
+              <td class="py-3 px-4"><span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">${t.status || 'active'}</span></td>
+              <td class="py-3 px-4">
+                <button onclick="selectTenant('${t.tenant_id}')" class="text-blue-400 hover:text-blue-300 text-sm">View Keys</button>
+              </td>
+            </tr>
+          `).join('');
+        }
+      } catch (err) {
+        console.error('Failed to load tenants:', err);
+      }
+    }
+
+    async function createTenant() {
+      const tenantId = document.getElementById('tenantId').value;
+      const name = document.getElementById('tenantName').value;
+      const tier = document.getElementById('tenantTier').value;
+      try {
+        const res = await fetch('/api/tenants', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ tenantId, name, tier })
+        });
+        if (res.ok) {
+          hideModal('createTenantModal');
+          loadTenants();
+        }
+      } catch (err) {
+        alert('Failed to create tenant: ' + err.message);
+      }
+    }
+
+    // API Key management
+    function selectTenant(tenantId) {
+      currentTenantId = tenantId;
+      // Switch to apikeys tab
+      document.querySelectorAll('[id^="tab-"]').forEach(el => el.classList.add('hidden'));
+      document.getElementById('tab-apikeys').classList.remove('hidden');
+      loadApiKeys(tenantId);
+    }
+
+    async function loadApiKeys(tenantId) {
+      try {
+        const res = await fetch('/api/tenants/' + tenantId + '/keys');
+        const data = await res.json();
+        const content = document.getElementById('apiKeysContent');
+        if (content) {
+          content.innerHTML = `
+            <h4 class="text-md font-medium mb-4">Keys for ${tenantId}</h4>
+            <div class="space-y-3">
+              ${(data.keys || []).map(k => `
+                <div class="p-4 bg-cyber-dark rounded-lg">
+                  <div class="flex justify-between items-start mb-2">
+                    <div>
+                      <p class="font-medium text-sm">${k.name || 'Unnamed'}</p>
+                      <p class="text-xs text-gray-400 font-mono">${k.key_prefix}...</p>
+                    </div>
+                    <span class="px-2 py-1 bg-green-500/20 text-green-400 rounded text-xs">${k.status || 'active'}</span>
+                  </div>
+                  <div class="flex items-center justify-between mt-3">
+                    <span class="text-xs text-gray-400">Limit: ${k.rate_limit || 1000}/min</span>
+                    <button onclick="deleteKey(${k.id})" class="text-red-400 hover:text-red-300 text-xs">Delete</button>
+                  </div>
+                </div>
+              `).join('')}
+            </div>
+          `;
+        }
+      } catch (err) {
+        console.error('Failed to load API keys:', err);
+      }
+    }
+
+    // Policies
+    async function loadPolicies() {
+      try {
+        const res = await fetch('/api/policies');
+        const data = await res.json();
+        const list = document.getElementById('policiesList');
+        if (list && data.policies) {
+          list.innerHTML = data.policies.map(p => `
+            <div class="p-4 bg-cyber-dark rounded-lg border border-cyber-border">
+              <div class="flex justify-between items-start mb-2">
+                <div>
+                  <h4 class="font-medium">${p.name || 'Unnamed'}</h4>
+                  <p class="text-sm text-gray-400">${p.description || 'No description'}</p>
+                </div>
+                <span class="px-2 py-1 bg-blue-500/20 text-blue-400 rounded text-xs">Priority: ${p.priority || 100}</span>
+              </div>
+              <div class="mt-3 text-xs text-gray-400">
+                Rules: ${p.rules?.length || 0}
+              </div>
+            </div>
+          `).join('');
+        }
+      } catch (err) {
+        console.error('Failed to load policies:', err);
+      }
+    }
+
+    // Security events
+    async function loadSecurityEvents() {
+      try {
+        const res = await fetch('/api/analytics/metrics');
+        const data = await res.json();
+        const events = document.getElementById('securityEvents');
+        if (events) {
+          events.innerHTML = (data.securityEvents || []).map(e => `
+            <div class="p-4 bg-cyber-dark rounded-lg border-l-4 border-red-500">
+              <div class="flex justify-between items-start">
+                <div>
+                  <p class="font-medium text-sm">${e.event_type || 'Unknown'}</p>
+                  <p class="text-sm text-gray-400 mt-1">${e.description || 'No description'}</p>
+                </div>
+                <span class="text-xs text-gray-500">${e.timestamp ? new Date(e.timestamp).toLocaleTimeString() : 'N/A'}</span>
+              </div>
+            </div>
+          `).join('') || '<p class="text-gray-400">No recent events</p>';
+        }
+      } catch (err) {
+        console.error('Failed to load security events:', err);
+      }
+    }
+
+    // Utility functions
+    function showModal(id) { 
+      const modal = document.getElementById(id);
+      if (modal) modal.classList.remove('hidden'); 
+    }
+    function hideModal(id) { 
+      const modal = document.getElementById(id);
+      if (modal) modal.classList.add('hidden'); 
+    }
+    function showCreateTenantModal() { showModal('createTenantModal'); }
+    function refreshAll() { loadMetrics(); }
+    function deleteKey(id) { 
+      if (confirm('Delete this API key?')) {
+        alert('Delete key ' + id + ' (API endpoint not implemented yet)');
+      }
+    }
+
+    // Initialize - load overview tab
+    window.onload = function() {
+      loadMetrics();
+      setInterval(loadMetrics, 30000);
+      // Set first tab as active
+      const firstTab = document.querySelector('.tab-btn');
+      if (firstTab) {
+        firstTab.classList.remove('border-transparent', 'text-gray-400');
+        firstTab.classList.add('border-blue-500', 'text-blue-400');
+      }
+    };
+  </script>
+</body>
+</html>

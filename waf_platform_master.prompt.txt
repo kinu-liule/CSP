@@ -1,0 +1,168 @@
+# WAF Platform (Web Application Firewall) - Master Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Chart.js (dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+Web Application Firewall microservice protecting web applications from OWASP Top 10 attacks (SQL injection, XSS, CSRF, SSRF) with custom rule creation, rate limiting, bot detection, and integration with Threat Intelligence and SOAR services.
+
+## 2. Core Requirements
+- OWASP Top 10 protection (SQLi, XSS, CSRF, SSRF, broken auth, etc.)
+- Custom rule engine with regex pattern matching and signature-based detection
+- Rate limiting per IP, per user, per API endpoint
+- Bot detection and mitigation (headless browser detection, behavior analysis)
+- Geo-blocking integration with NGFW service
+- Real-time attack logging and alerting via RabbitMQ
+- Integration with Threat Intel for malicious IP/User-Agent blocking
+- Redis caching for rules, rate limit counters, blocked IPs
+- Reverse proxy mode (optional) or API Gateway integration
+
+## 3. API Endpoints (routed via API Gateway: /api/waf/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| GET | /api/waf/rules | List WAF rules | JWT/API Key |
+| POST | /api/waf/rules | Create WAF rule | Admin JWT |
+| GET | /api/waf/rules/:id | Get rule details | JWT/API Key |
+| PUT | /api/waf/rules/:id | Update rule | Admin JWT |
+| DELETE | /api/waf/rules/:id | Delete rule | Admin JWT |
+| GET | /api/waf/blocked-ips | List blocked IPs | JWT/API Key |
+| POST | /api/waf/block-ip | Manually block IP | Admin JWT |
+| GET | /api/waf/attacks | List attack attempts | JWT/API Key |
+| GET | /api/waf/whitelist | Get whitelisted IPs | JWT/API Key |
+| POST | /api/waf/whitelist | Add IP to whitelist | Admin JWT |
+| GET | /api/waf/metrics | Get WAF metrics | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE waf_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  pattern_type VARCHAR(50), -- regex, signature, semantic
+  pattern TEXT NOT NULL, -- regex pattern or signature
+  target VARCHAR(50), -- header, body, query, uri, all
+  action VARCHAR(20) DEFAULT 'block', -- block, alert, log
+  enabled BOOLEAN DEFAULT true,
+  match_count INT DEFAULT 0,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE waf_blocked_ips (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  ip_address INET NOT NULL,
+  reason VARCHAR(255),
+  blocked_by_rule UUID REFERENCES waf_rules(id),
+  expires_at TIMESTAMP, -- NULL = permanent
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE waf_attacks (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id),
+  rule_id UUID REFERENCES waf_rules(id),
+  attacker_ip INET NOT NULL,
+  attack_type VARCHAR(100), -- sqli, xss, csrf, path_traversal
+  target_url VARCHAR(500),
+  matched_pattern TEXT,
+  request_headers JSONB,
+  request_body TEXT,
+  blocked BOOLEAN DEFAULT true,
+  timestamp TIMESTAMP DEFAULT NOW(),
+  INDEX (tenant_id, timestamp DESC)
+);
+
+CREATE TABLE waf_whitelist (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  ip_address INET,
+  user_agent_pattern VARCHAR(500),
+  reason TEXT,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_waf_rules_tenant ON waf_rules(tenant_id);
+CREATE INDEX idx_waf_attacks_tenant_time ON waf_attacks(tenant_id, timestamp);
+```
+
+## 5. Service Integrations
+- Redis: Cache active rules, rate limit counters, blocked IPs (TTL 1h)
+- RabbitMQ: Publish to `waf-events` queue (attack.blocked, ip.auto_blocked, rule.triggered, rate_limit.exceeded)
+- API Gateway: All endpoints routed through `/api/waf/*`, WAF rules enforced at gateway level
+- Threat Intel Service: Pull malicious IPs/User-Agents for automatic blocking
+- NGFW Service: Sync geo-blocking rules, share blocked IPs
+- SOAR Service: Trigger playbooks for repeated attacks, critical alerts
+- Data Lake: Send attack logs for long-term analysis
+- IAM Service: Validate tenant_id from JWT token
+
+## 6. Security Requirements
+- All endpoints protected by API Gateway OWASP policies
+- Tenant isolation: queries filtered by JWT tenant_id
+- Encrypt sensitive rule configurations at rest
+- Audit logging: all rule changes logged to `request_logs`
+- Rate limiting on API to prevent rule flooding
+- mTLS for service-to-service communication
+- Log sanitization: don't log full request bodies (may contain PII/credentials)
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3001
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block (matches existing waf-service)
+```yaml
+waf:
+  platform: linux/amd64
+  build:
+    context: ./waf-service
+    dockerfile: Dockerfile
+  container_name: cybersec-waf
+  ports:
+    - "3001:3001"
+  environment:
+    NODE_ENV: production
+    PORT: 3001
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    THREAT_INTEL_URL: http://threat-intel:3019
+    NGFW_SERVICE_URL: http://ngfw:3002
+    SOAR_SERVICE_URL: http://siem-soar:3003
+    DATA_LAKE_URL: http://data-lake:3017
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for rule engine, pattern matching, rate limiter
+- Health check: `GET /health` returns 200
+- Test rule creation: `POST /api/waf/rules` with valid JWT returns 201
+- Test attack blocking: send SQLi payload, verify blocked and logged
+- Test rate limiting: 100+ rapid requests from same IP triggers block
+- Test tenant isolation: JWT from tenant A cannot access tenant B rules
+- Align with platform `test-platform.js` script

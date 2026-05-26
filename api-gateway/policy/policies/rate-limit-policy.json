@@ -1,0 +1,32 @@
+{
+  "id": "rate-limit-policy",
+  "name": "Tenant Rate Limit Policy",
+  "description": "Rate limiting based on tenant tier",
+  "priority": 1,
+  "rules": [
+    {
+      "condition": "tenant.tier == \"free\"",
+      "action": "rate_limit",
+      "parameters": {
+        "max": 100,
+        "window": 900000
+      }
+    },
+    {
+      "condition": "tenant.tier == \"premium\"",
+      "action": "rate_limit",
+      "parameters": {
+        "max": 1000,
+        "window": 900000
+      }
+    },
+    {
+      "condition": "tenant.tier == \"enterprise\"",
+      "action": "rate_limit",
+      "parameters": {
+        "max": 10000,
+        "window": 900000
+      }
+    }
+  ]
+}

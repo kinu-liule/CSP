@@ -1,0 +1,130 @@
+# Asset Management Platform - Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Axios (optional dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+Microservice for discovering, tracking, and managing digital assets (servers, endpoints, cloud resources, applications) across multi-tenant environments with real-time inventory and compliance monitoring.
+
+## 2. Core Requirements
+- Asset discovery via agent-based and agentless methods (API integrations with cloud providers)
+- Asset inventory with metadata (OS, IP, MAC, owner, tags, criticality)
+- Asset grouping, tagging, and search with Redis caching for fast lookups
+- Compliance monitoring (track asset compliance against policies)
+- Asset lifecycle management (provision, decommission, transfer)
+- Integration with Vulnerability Scanner to link CVEs to assets
+- RabbitMQ event publishing for asset changes (create, update, delete, compliance violation)
+
+## 3. API Endpoints (routed via API Gateway: /api/assets/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| GET | /api/assets | List all assets (filter by tenant) | JWT/API Key |
+| POST | /api/assets | Register new asset | JWT/API Key |
+| GET | /api/assets/:id | Get asset details | JWT/API Key |
+| PUT | /api/assets/:id | Update asset metadata | JWT/API Key |
+| DELETE | /api/assets/:id | Decommission asset | Admin JWT |
+| GET | /api/assets/:id/vulns | Get vulnerabilities for asset | JWT/API Key |
+| POST | /api/assets/discover | Trigger asset discovery scan | Admin JWT |
+| GET | /api/assets/compliance | Get compliance status report | JWT/API Key |
+| PUT | /api/assets/:id/tags | Update asset tags | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE assets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(255) NOT NULL,
+  asset_type VARCHAR(50) NOT NULL, -- server, endpoint, cloud_vm, container, app
+  ip_address INET,
+  mac_address VARCHAR(17),
+  os VARCHAR(100),
+  owner VARCHAR(255),
+  tags TEXT[] DEFAULT '{}',
+  criticality VARCHAR(20) DEFAULT 'medium', -- low, medium, high, critical
+  status VARCHAR(20) DEFAULT 'active', -- active, decommissioned, maintenance
+  cloud_provider VARCHAR(50), -- aws, azure, gcp, on-prem
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE asset_compliance (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  asset_id UUID REFERENCES assets(id),
+  policy_name VARCHAR(255) NOT NULL,
+  status VARCHAR(20) NOT NULL, -- compliant, non-compliant, unknown
+  details JSONB,
+  checked_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_assets_tenant ON assets(tenant_id);
+CREATE INDEX idx_assets_type ON assets(asset_type);
+```
+
+## 5. Service Integrations
+- Redis: Cache asset inventory, search results, compliance status
+- RabbitMQ: Publish to `asset-events` queue (asset.created, asset.updated, asset.decommissioned, compliance.violation)
+- API Gateway: All endpoints routed through `/api/assets/*`
+- Vulnerability Scanner: Link vulnerability scan results to assets via asset_id
+- IAM Service: Validate tenant_id from JWT token
+
+## 6. Security Requirements
+- All endpoints protected by API Gateway OWASP policies
+- Tenant isolation: queries filtered by JWT tenant_id
+- Audit logging: asset changes logged to `request_logs` via API Gateway
+- Encrypt sensitive asset metadata at rest
+- mTLS for service-to-service communication
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3009
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3009/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block
+```yaml
+asset-management:
+  platform: linux/amd64
+  build:
+    context: ./asset-management-service
+    dockerfile: Dockerfile
+  container_name: cybersec-asset-mgmt
+  ports:
+    - "3009:3009"
+  environment:
+    NODE_ENV: production
+    PORT: 3009
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3009/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for asset CRUD operations, compliance checks
+- Health check: `GET /health` returns 200
+- Test asset creation: `POST /api/assets` with valid JWT returns 201
+- Test tenant isolation: JWT from tenant A cannot access tenant B assets
+- Align with platform `test-platform.js` script

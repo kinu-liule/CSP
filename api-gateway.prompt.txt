@@ -1,0 +1,150 @@
+# API Gateway - Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, jsonwebtoken, express-rate-limit, helmet, http-proxy-middleware
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Policy Engine (JSON-based rules), mTLS
+
+## 1. Component Overview
+Central entry point for all platform requests, handling routing, authentication, rate limiting, OWASP protection, and tenant-based policy enforcement for all microservices.
+
+## 2. Core Requirements
+- Reverse proxy routing to 8 backend microservices (IAM, WAF, NGFW, SIEM, Vuln Scanner, Fraud, Awareness, GRC)
+- JWT/API Key/mTLS authentication
+- Tenant-based rate limiting, geo-blocking, payload inspection via JSON policy engine
+- OWASP API Top 10 protection (BOLA, broken auth, data exposure)
+- Request/security event logging to PostgreSQL, Redis caching for API keys
+- RabbitMQ event publishing for security incidents
+
+## 3. API Endpoints
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| POST | /api/auth/login | Generate JWT token | None |
+| GET | /api/tenants | List all tenants | Admin JWT |
+| POST | /api/tenants | Create new tenant | Admin JWT |
+| PUT | /api/tenants/:id | Update tenant | Admin JWT |
+| DELETE | /api/tenants/:id | Delete tenant | Admin JWT |
+| GET | /api/policies | List security policies | Admin JWT |
+| POST | /api/policies | Add new policy | Admin JWT |
+| GET | /api/analytics/metrics | Get gateway metrics | Admin JWT |
+| ANY | /api/:service/* | Proxy to backend service | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE tenants (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(255) NOT NULL UNIQUE,
+  plan VARCHAR(50) DEFAULT 'basic',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE api_keys (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  key_hash VARCHAR(255) NOT NULL,
+  scopes TEXT[] DEFAULT '{}',
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE policies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  name VARCHAR(255) NOT NULL,
+  type VARCHAR(50) NOT NULL, -- rate-limit, geo-block, payload-inspection
+  rules JSONB NOT NULL,
+  tenant_id UUID REFERENCES tenants(id),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE request_logs (
+  id SERIAL PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id),
+  service VARCHAR(50),
+  endpoint VARCHAR(255),
+  status_code INT,
+  ip_address INET,
+  timestamp TIMESTAMP DEFAULT NOW()
+);
+```
+
+## 5. Service Integrations
+- Redis: Cache API keys, rate limit counters
+- RabbitMQ: Publish security events (rate limit exceeded, blocked requests) to `security-events` queue
+- IAM Service: Validate JWT tokens, sync tenant data
+- All backend services: Proxy requests via `http-proxy-middleware`
+
+## 6. Security Requirements
+- Enforce OWASP API Top 10 via middleware plugins (bot detection, IP filtering, payload inspection)
+- mTLS for service-to-service communication
+- Audit all policy changes, auth failures to `security_events` table
+- TLS termination via Nginx reverse proxy
+
+## 7. Deployment
+### Dockerfile (matches existing base)
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3000
+HEALTHCHECK --interval=30s --timeout=10s --retries=5 \
+  CMD node -e "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block (matches existing)
+```yaml
+api-gateway:
+  platform: linux/amd64
+  build:
+    context: ./api-gateway
+    dockerfile: Dockerfile
+  container_name: cybersec-api-gateway
+  ports:
+    - "3000:3000"
+  environment:
+    NODE_ENV: production
+    PORT: 3000
+    DB_HOST: postgres
+    DB_PORT: 5432
+    DB_NAME: cybersec_platform
+    DB_USER: cybersec
+    DB_PASSWORD: securepassword
+    JWT_SECRET: super-secret-jwt-key-change-in-production
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    IAM_SERVICE_URL: http://iam:3008
+    WAF_SERVICE_URL: http://waf:3001
+    NGFW_SERVICE_URL: http://ngfw:3002
+    SIEM_SOAR_SERVICE_URL: http://siem-soar:3003
+    VULN_SCANNER_SERVICE_URL: http://vuln-scanner:3004
+    FRAUD_DETECTION_SERVICE_URL: http://fraud-detection:3005
+    AWARENESS_SERVICE_URL: http://awareness:3006
+    GRC_SERVICE_URL: http://grc:3007
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+    rabbitmq:
+      condition: service_healthy
+  volumes:
+    - ./api-gateway/logs:/app/logs
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 5
+    start_period: 40s
+  restart: unless-stopped
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for policy engine, auth middleware
+- Health check endpoint: `GET /health` returns 200
+- Test rate limiting: 100+ rapid requests to `/health` returns 429
+- Test proxy: `GET /api/iam/health` routes to IAM service
+- Align with platform `test-platform.js` script

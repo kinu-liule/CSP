@@ -1,0 +1,137 @@
+# Security Data Lake - Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Chart.js (data analytics dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+Security Data Lake for centralized ingestion, storage, and analytics of security logs from all platform services, with support for ad-hoc querying, data retention policies, and integration with SIEM, SOAR, and GRC services.
+
+## 2. Core Requirements
+- Ingest logs from all platform services via RabbitMQ
+- Schema-on-read support for unstructured log data
+- SQL-like querying interface for security analysts
+- Data retention policies with automated archival
+- Integration with SIEM for real-time alerting
+- Integration with SOAR for automated playbook triggering
+- Data visualization dashboards for threat trends
+- Redis caching for frequently accessed query results (TTL 1h)
+
+## 3. API Endpoints (routed via API Gateway: /api/data-lake/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| POST | /api/data-lake/logs | Ingest log entry | Service JWT |
+| GET | /api/data-lake/logs | Query logs with filters | JWT/API Key |
+| POST | /api/data-lake/query | Execute SQL-like query | JWT/API Key |
+| GET | /api/data-lake/datasets | List available datasets | JWT/API Key |
+| POST | /api/data-lake/datasets | Create new dataset | Admin JWT |
+| GET | /api/data-lake/retention | Get retention policies | Admin JWT |
+| GET | /api/data-lake/metrics | Get data lake metrics | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE log_entries (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id),
+  service_name VARCHAR(100),
+  log_level VARCHAR(20),
+  log_type VARCHAR(50),
+  log_data JSONB NOT NULL,
+  timestamp TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE datasets (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  query TEXT NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE retention_policies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  service_name VARCHAR(100),
+  retention_days INT DEFAULT 365,
+  archival_enabled BOOLEAN DEFAULT false,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_logs_tenant_time ON log_entries(tenant_id, timestamp);
+```
+
+## 5. Service Integrations
+- Redis: Cache query results, frequently accessed datasets (TTL 1h)
+- RabbitMQ: Consume from all service queues, publish to `data-lake-events`
+- API Gateway: All endpoints routed through `/api/data-lake/*`
+- SIEM Service: Send high-priority log alerts
+- SOAR Service: Trigger playbooks based on log patterns
+- GRC Service: Provide compliance reports
+- Threat Intel Service: Enrich log IOCs with threat data
+
+## 6. Security Requirements
+- Tenant isolation: queries filtered by JWT tenant_id
+- Encryption at rest for stored logs (AES-256)
+- Audit logging for all query/dataset operations
+- Data anonymization for PII in logs
+- Rate limiting on query endpoints (max 50 queries/minute per tenant)
+- mTLS for service-to-service communication
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3017
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3017/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block
+```yaml
+data-lake:
+  platform: linux/amd64
+  build:
+    context: ./security-data-lake-service
+    dockerfile: Dockerfile
+  container_name: cybersec-data-lake
+  ports:
+    - "3017:3017"
+  environment:
+    NODE_ENV: production
+    PORT: 3017
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    SIEM_SERVICE_URL: http://siem-soar:3003
+    SOAR_SERVICE_URL: http://siem-soar:3003
+    GRC_SERVICE_URL: http://grc:3007
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3017/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for log parsing, query execution
+- Health check: `GET /health` returns 200
+- Test log ingestion: `POST /api/data-lake/logs` returns 201
+- Test query execution: `POST /api/data-lake/query` returns results
+- Test tenant isolation: JWT from tenant A cannot access tenant B logs
+- Align with platform `test-platform.js` script

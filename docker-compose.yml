@@ -1,0 +1,778 @@
+services:
+  # PostgreSQL Database
+  postgres:
+    platform: linux/amd64
+    image: postgres:16-alpine
+    container_name: cybersec-postgres
+    environment:
+          POSTGRES_DB: cybersec_platform
+          POSTGRES_USER: cybersec
+          POSTGRES_PASSWORD: securepassword
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init.sql:/docker-entrypoint-initdb.d/init.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U cybersec"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cybersec-network
+
+  # Redis for caching
+  redis:
+    platform: linux/amd64
+    image: redis:7-alpine
+    container_name: cybersec-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - cybersec-network
+
+  # RabbitMQ for message queuing
+  rabbitmq:
+    platform: linux/amd64
+    image: rabbitmq:3-management-alpine
+    container_name: cybersec-rabbitmq
+    environment:
+          RABBITMQ_DEFAULT_USER: cybersec
+          RABBITMQ_DEFAULT_PASS: securepassword
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_running"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    networks:
+      - cybersec-network
+
+  # API Gateway
+  api-gateway:
+    platform: linux/amd64
+    build:
+      context: ./api-gateway
+      dockerfile: Dockerfile
+    container_name: cybersec-api-gateway
+    ports:
+      - "3000:3000"
+    environment:
+          NODE_ENV: production
+          PORT: 3000
+          DB_HOST: postgres
+          DB_PORT: 5432
+          DB_NAME: cybersec_platform
+          DB_USER: cybersec
+          DB_PASSWORD: securepassword
+          JWT_SECRET: super-secret-jwt-key-change-in-production
+          USE_HTTPS: "false"
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          # Original services
+          IAM_SERVICE_URL: http://iam:3008
+          WAF_SERVICE_URL: http://waf:3001
+          NGFW_SERVICE_URL: http://ngfw:3002
+          SIEM_SOAR_SERVICE_URL: http://siem-soar:3003
+          VULN_SCANNER_SERVICE_URL: http://vuln-scanner:3004
+          FRAUD_DETECTION_SERVICE_URL: http://fraud-detection:3005
+          AWARENESS_SERVICE_URL: http://awareness:3006
+          GRC_SERVICE_URL: http://grc:3007
+          # New services - 12 total
+          ASSET_MANAGEMENT_URL: http://asset-management:3009
+          CSPM_SERVICE_URL: http://cspm:3011
+          EDR_SERVICE_URL: http://edr:3015
+          THREAT_INTEL_URL: http://threat-intel:3019
+          SOAR_SERVICE_URL: http://soar:3018
+          DATA_SECURITY_URL: http://data-security:3012
+          DATA_LAKE_URL: http://data-lake:3017
+          XDR_SERVICE_URL: http://xdr:3020
+          DEVSECOPS_SERVICE_URL: http://devsecops:3014
+          DECEPTION_SERVICE_URL: http://deception:3013
+          PASSWORD_MANAGER_URL: http://password-manager:3016
+          BUSINESS_CONTINUITY_URL: http://business-continuity:3010
+          RISK_ENGINE_URL: http://risk-engine:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    volumes:
+      - ./api-gateway/logs:/app/logs
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3000/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
+    restart: unless-stopped
+    networks:
+      - cybersec-network
+
+  # IAM Service
+  iam:
+    platform: linux/amd64
+    build:
+      context: ./iam-service
+      dockerfile: Dockerfile
+    container_name: cybersec-iam
+    ports:
+      - "3008:3008"
+    environment:
+          NODE_ENV: production
+          PORT: 3008
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          JWT_SECRET: super-secret-jwt-key-change-in-production
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    depends_on:
+      postgres:
+        condition: service_healthy
+      rabbitmq:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3008/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # WAF Service
+  waf:
+    platform: linux/amd64
+    build:
+      context: ./waf-service
+      dockerfile: Dockerfile
+    container_name: cybersec-waf
+    ports:
+      - "3001:3001"
+    environment:
+          NODE_ENV: production
+          PORT: 3001
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3001/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # NGFW Service
+  ngfw:
+    platform: linux/amd64
+    build:
+      context: ./ngfw-service
+      dockerfile: Dockerfile
+    container_name: cybersec-ngfw
+    ports:
+      - "3002:3002"
+    environment:
+          NODE_ENV: production
+          PORT: 3002
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # SIEM-SOAR Service
+  siem-soar:
+    platform: linux/amd64
+    build:
+      context: ./siem-soar-service
+      dockerfile: Dockerfile
+    container_name: cybersec-siem
+    ports:
+      - "3003:3003"
+    environment:
+          NODE_ENV: production
+          PORT: 3003
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3003/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Vulnerability Scanner Service
+  vuln-scanner:
+    platform: linux/amd64
+    build:
+      context: ./vuln-scanner-service
+      dockerfile: Dockerfile
+    container_name: cybersec-vuln-scanner
+    ports:
+      - "3004:3004"
+    environment:
+          NODE_ENV: production
+          PORT: 3004
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3004/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Fraud Detection Service
+  fraud-detection:
+    platform: linux/amd64
+    build:
+      context: ./fraud-detection-service
+      dockerfile: Dockerfile
+    container_name: cybersec-fraud
+    ports:
+      - "3005:3005"
+    environment:
+          NODE_ENV: production
+          PORT: 3005
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3005/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Awareness Platform (Phishing Simulation & Security Training)
+  awareness:
+    platform: linux/amd64
+    build:
+      context: ./awareness-service
+      dockerfile: Dockerfile
+    container_name: cybersec-awareness
+    environment:
+      PORT: 3006
+      DB_HOST: postgres
+      DB_PORT: 5432
+      DB_NAME: cybersec_platform
+      DB_USER: cybersec
+      DB_PASSWORD: securepassword
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3006/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      start_period: 15s
+      retries: 3
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks:
+      - cybersec-network
+
+  # GRC Service
+  grc:
+    platform: linux/amd64
+    build:
+      context: ./grc-service
+      dockerfile: Dockerfile
+    container_name: cybersec-grc
+    ports:
+      - "3007:3007"
+    environment:
+          NODE_ENV: production
+          PORT: 3007
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3007/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Risk Engine
+  risk-engine:
+    platform: linux/amd64
+    build:
+      context: ./risk-engine
+      dockerfile: Dockerfile
+    container_name: cybersec-risk-engine
+    ports:
+      - "8000:8000"
+    environment:
+          NODE_ENV: production
+          PORT: 8000
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    depends_on:
+      postgres:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; r = urllib.request.urlopen('http://localhost:8000/health'); exit(0 if r.status == 200 else 1)"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Asset Management Service
+  asset-management:
+    platform: linux/amd64
+    build:
+      context: ./asset-management-service
+      dockerfile: Dockerfile
+    container_name: cybersec-asset-mgmt
+    ports:
+      - "3009:3009"
+    environment:
+          NODE_ENV: production
+          PORT: 3009
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3009/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # CSPM Service
+  cspm:
+    platform: linux/amd64
+    build:
+      context: ./cspm-service
+      dockerfile: Dockerfile
+    container_name: cybersec-cspm
+    ports:
+      - "3011:3011"
+    environment:
+          NODE_ENV: production
+          PORT: 3011
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          JWT_SECRET: super-secret-jwt-key-change-in-production
+          GRC_SERVICE_URL: http://grc:3007
+          VULN_SCANNER_URL: http://vuln-scanner:3004
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3011/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # EDR Service
+  edr:
+    platform: linux/amd64
+    build:
+      context: ./edr-service
+      dockerfile: Dockerfile
+    container_name: cybersec-edr
+    ports:
+      - "3015:3015"
+    environment:
+          NODE_ENV: production
+          PORT: 3015
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          JWT_SECRET: super-secret-jwt-key-change-in-production
+          RISK_ENGINE_URL: http://risk-engine:8000
+          THREAT_INTEL_URL: http://threat-intel:3019
+          SOAR_SERVICE_URL: http://siem-soar:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3015/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Threat Intel Service
+  threat-intel:
+    platform: linux/amd64
+    build:
+      context: ./threat-intel-service
+      dockerfile: Dockerfile
+    container_name: cybersec-threat-intel
+    ports:
+      - "3019:3019"
+    environment:
+          NODE_ENV: production
+          PORT: 3019
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          JWT_SECRET: super-secret-jwt-key-change-in-production
+          WAF_SERVICE_URL: http://waf:3001
+          NGFW_SERVICE_URL: http://ngfw:3002
+          EDR_SERVICE_URL: http://edr:3015
+          SIEM_SERVICE_URL: http://siem-soar:3003
+          RISK_ENGINE_URL: http://risk-engine:8000
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3019/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # SOAR Service
+  soar:
+    platform: linux/amd64
+    build:
+      context: ./soar-service
+      dockerfile: Dockerfile
+    container_name: cybersec-soar
+    ports:
+      - "3018:3018"
+    environment:
+          NODE_ENV: production
+          PORT: 3018
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          SIEM_SERVICE_URL: http://siem-soar:3003
+          EDR_SERVICE_URL: http://edr:3015
+          WAF_SERVICE_URL: http://waf:3001
+          NGFW_SERVICE_URL: http://ngfw:3002
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3018/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Data Security Service
+  data-security:
+    platform: linux/amd64
+    build:
+      context: ./data-security-service
+      dockerfile: Dockerfile
+    container_name: cybersec-data-security
+    ports:
+      - "3012:3012"
+    environment:
+          NODE_ENV: production
+          PORT: 3012
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          JWT_SECRET: super-secret-jwt-key-change-in-production
+          GRC_SERVICE_URL: http://grc:3007
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3012/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Security Data Lake Service
+  data-lake:
+    platform: linux/amd64
+    build:
+      context: ./security-data-lake-service
+      dockerfile: Dockerfile
+    container_name: cybersec-data-lake
+    ports:
+      - "3017:3017"
+    environment:
+          NODE_ENV: production
+          PORT: 3017
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          SIEM_SERVICE_URL: http://siem-soar:3003
+          GRC_SERVICE_URL: http://grc:3007
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3017/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # XDR Service
+  xdr:
+    platform: linux/amd64
+    build:
+      context: ./xdr-service
+      dockerfile: Dockerfile
+    container_name: cybersec-xdr
+    ports:
+      - "3020:3020"
+    environment:
+          NODE_ENV: production
+          PORT: 3020
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          JWT_SECRET: super-secret-jwt-key-change-in-production
+          RISK_ENGINE_URL: http://risk-engine:8000
+          EDR_SERVICE_URL: http://edr:3015
+          NGFW_SERVICE_URL: http://ngfw:3002
+          CSPM_SERVICE_URL: http://cspm:3011
+          THREAT_INTEL_URL: http://threat-intel:3019
+          SOAR_SERVICE_URL: http://siem-soar:3003
+          SIEM_SERVICE_URL: http://siem-soar:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3020/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # DevSecOps Service
+  devsecops:
+    platform: linux/amd64
+    build:
+      context: ./devsecops-service
+      dockerfile: Dockerfile
+    container_name: cybersec-devsecops
+    ports:
+      - "3014:3014"
+    environment:
+          NODE_ENV: production
+          PORT: 3014
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          VULN_SCANNER_URL: http://vuln-scanner:3004
+          CSPM_SERVICE_URL: http://cspm:3011
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3014/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Deception Service
+  deception:
+    platform: linux/amd64
+    build:
+      context: ./deception-service
+      dockerfile: Dockerfile
+    container_name: cybersec-deception
+    ports:
+      - "3013:3013"
+    environment:
+          NODE_ENV: production
+          PORT: 3013
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          SIEM_SERVICE_URL: http://siem-soar:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3013/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Password Manager Service
+  password-manager:
+    platform: linux/amd64
+    build:
+      context: ./password-manager-service
+      dockerfile: Dockerfile
+    container_name: cybersec-password-mgr
+    ports:
+      - "3016:3016"
+    environment:
+          NODE_ENV: production
+          PORT: 3016
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          IAM_SERVICE_URL: http://iam:3008
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3016/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Business Continuity Service
+  business-continuity:
+    platform: linux/amd64
+    build:
+      context: ./business-continuity-service
+      dockerfile: Dockerfile
+    container_name: cybersec-bcp
+    ports:
+      - "3010:3010"
+    environment:
+          NODE_ENV: production
+          PORT: 3010
+          DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+          DB_SSL: 'false'
+          REDIS_URL: redis://redis:6379
+          RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+          SIEM_SERVICE_URL: http://siem-soar:3003
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "node", "-e", "require('http').get('http://localhost:3010/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Frontend
+  frontend:
+    platform: linux/amd64
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: cybersec-frontend
+    ports:
+      - "8080:80"
+    environment:
+          VITE_API_URL: /api
+    depends_on:
+      api-gateway:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:80/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - cybersec-network
+
+  # Nginx Reverse Proxy
+  nginx:
+    platform: linux/amd64
+    image: nginx:alpine
+    container_name: cybersec-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+      - "8081:8081"
+      - "9090:9090"
+    volumes:
+      - ./nginx/nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./nginx/ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - api-gateway
+      - frontend
+    networks:
+      - cybersec-network
+
+volumes:
+  postgres_data:
+  redis_data:
+  rabbitmq_data:
+
+
+networks:
+  cybersec-network:
+    driver: bridge

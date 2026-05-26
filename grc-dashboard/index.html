@@ -1,0 +1,176 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>GRC Platform Dashboard</title>
+    <style>
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+        body { font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif; background: #0f172a; color: #e2e8f0; min-height: 100vh; }
+        .container { max-width: 1200px; margin: 0 auto; padding: 20px; }
+        h1 { text-align: center; font-size: 2.5rem; margin-bottom: 2rem; }
+        h2 { font-size: 1.25rem; margin: 0 0 1rem 0; }
+        .grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(300px, 1fr)); gap: 1.5rem; margin-bottom: 2rem; }
+        .card { background: #1e293b; border-radius: 8px; padding: 1.5rem; }
+        .stat { font-size: 2.5rem; font-weight: bold; color: #3b82f6; }
+        .subtitle { color: #94a3b8; font-size: 0.875rem; margin-top: 0.5rem; }
+        .section { background: #1e293b; border-radius: 8px; padding: 1.5rem; margin-bottom: 1.5rem; }
+        .item { padding: 1rem; border-bottom: 1px solid #334155; }
+        .item:last-child { border-bottom: none; }
+        button { background: #3b82f6; color: white; border: none; padding: 0.5rem 1rem; border-radius: 4px; cursor: pointer; margin-right: 0.5rem; }
+        button:hover { background: #2563eb; }
+        .flex { display: flex; justify-content: space-between; align-items: center; }
+        .badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 9999px; font-size: 0.75rem; font-weight: 600; }
+        .badge-active { background: #16a34a; color: #dcfce7; }
+        .badge-draft { background: #ca8a04; color: #fef9c3; }
+        .badge-open { background: #dc2626; color: #fee2e2; }
+        .badge-compliant { background: #16a34a; color: #dcfce7; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🛡️ GRC Platform Dashboard</h1>
+        
+        <div class="grid">
+            <div class="card">
+                <h2>Policies</h2>
+                <div class="stat" id="policy-count">...</div>
+                <div class="subtitle">Total policies</div>
+            </div>
+            <div class="card">
+                <h2>Controls</h2>
+                <div class="stat" id="control-count">...</div>
+                <div class="subtitle">Total controls</div>
+            </div>
+            <div class="card">
+                <h2>Open Risks</h2>
+                <div class="stat" style="color: #ef4444;" id="risk-count">...</div>
+                <div class="subtitle">Requires attention</div>
+            </div>
+            <div class="card">
+                <h2>Compliance</h2>
+                <div class="stat" style="color: #22c55e;" id="compliance-rate">...</div>
+                <div class="subtitle">Average score</div>
+            </div>
+        </div>
+
+        <div class="section">
+            <div class="flex">
+                <h3>📋 Policies</h3>
+                <button onclick="loadPolicies()">Refresh</button>
+            </div>
+            <div id="policies-list"><p class="subtitle">Loading...</p></div>
+        </div>
+
+        <div class="section">
+            <div class="flex">
+                <h3>🔐 Controls</h3>
+                <button onclick="loadControls()">Refresh</button>
+            </div>
+            <div id="controls-list"><p class="subtitle">Loading...</p></div>
+        </div>
+
+        <div class="section">
+            <div class="flex">
+                <h3>⚠️ Risks</h3>
+                <button onclick="loadRisks()">Refresh</button>
+            </div>
+            <div id="risks-list"><p class="subtitle">Loading...</p></div>
+        </div>
+    </div>
+
+    <script>
+        const headers = { 'x-tenant-id': 'tenant1' };
+
+        async function loadDashboard() {
+            try {
+                const res = await fetch('http://localhost:3007/api/dashboard', { headers });
+                const data = await res.json();
+                if (data.success) {
+                    document.getElementById('policy-count').textContent = data.data.policies;
+                    document.getElementById('control-count').textContent = data.data.controls;
+                    document.getElementById('risk-count').textContent = data.data.open_risks;
+                    document.getElementById('compliance-rate').textContent = (data.data.avg_risk || 0).toFixed(1);
+                }
+            } catch (e) {
+                console.error('Dashboard error:', e);
+            }
+        }
+
+        async function loadPolicies() {
+            try {
+                const res = await fetch('http://localhost:3007/api/policies', { headers });
+                const data = await res.json();
+                const list = document.getElementById('policies-list');
+                if (data.success && data.data.length > 0) {
+                    list.innerHTML = data.data.map(p => `
+                        <div class="item">
+                            <div class="flex">
+                                <strong>${p.name}</strong>
+                                <span class="badge badge-${p.status}">${p.status}</span>
+                            </div>
+                            <p class="subtitle">${p.framework || 'No framework'} • Version ${p.version || '1.0'}</p>
+                        </div>
+                    `).join('');
+                } else {
+                    list.innerHTML = '<p class="subtitle">No policies yet.</p>';
+                }
+            } catch (e) {
+                document.getElementById('policies-list').innerHTML = '<p class="subtitle">Error loading policies</p>';
+            }
+        }
+
+        async function loadControls() {
+            try {
+                const res = await fetch('http://localhost:3007/api/controls', { headers });
+                const data = await res.json();
+                const list = document.getElementById('controls-list');
+                if (data.success && data.data.length > 0) {
+                    list.innerHTML = data.data.map(c => `
+                        <div class="item">
+                            <div class="flex">
+                                <strong>${c.name}</strong>
+                                <span class="badge badge-${c.status}">${c.status}</span>
+                            </div>
+                            <p class="subtitle">${c.framework || 'No framework'} • Score: ${c.effectiveness_score || 0}%</p>
+                        </div>
+                    `).join('');
+                } else {
+                    list.innerHTML = '<p class="subtitle">No controls yet.</p>';
+                }
+            } catch (e) {
+                document.getElementById('controls-list').innerHTML = '<p class="subtitle">Error loading controls</p>';
+            }
+        }
+
+        async function loadRisks() {
+            try {
+                const res = await fetch('http://localhost:3007/api/risks', { headers });
+                const data = await res.json();
+                const list = document.getElementById('risks-list');
+                if (data.success && data.data.length > 0) {
+                    list.innerHTML = data.data.map(r => `
+                        <div class="item">
+                            <div class="flex">
+                                <strong>${r.title}</strong>
+                                <span class="badge badge-${r.status}">${r.status}</span>
+                            </div>
+                            <p class="subtitle">${r.category} • Risk Score: ${r.risk_score}</p>
+                        </div>
+                    `).join('');
+                } else {
+                    list.innerHTML = '<p class="subtitle">No risks yet.</p>';
+                }
+            } catch (e) {
+                document.getElementById('risks-list').innerHTML = '<p class="subtitle">Error loading risks</p>';
+            }
+        }
+
+        // Load all data
+        loadDashboard();
+        loadPolicies();
+        loadControls();
+        loadRisks();
+    </script>
+</body>
+</html>

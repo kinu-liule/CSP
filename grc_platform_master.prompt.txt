@@ -1,0 +1,184 @@
+# GRC Platform (Governance, Risk & Compliance) - Master Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Chart.js, React ChartJS 2 (dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+Comprehensive GRC platform managing organizational governance, risk management, and compliance (ISO 27001, NIST, PCI-DSS, HIPAA, GDPR) with automated control mapping, risk register, audit management, and compliance reporting across multi-tenant environments.
+
+## 2. Core Requirements
+- Compliance framework management (ISO 27001, NIST CSF, PCI-DSS v4, HIPAA, GDPR, SOC 2)
+- Risk register with inherent/residual risk scoring (integration with Risk Engine)
+- Control library with mapping across frameworks
+- Audit management (planning, execution, findings, remediation tracking)
+- Policy management with versioning and attestation tracking
+- Automated compliance monitoring via integration with CSPM, Vulnerability Scanner, EDR
+- Evidence collection and management for audits
+- Redis caching for framework controls, risk scores, compliance status
+- RabbitMQ event publishing for non-compliance, high risk, audit findings
+
+## 3. API Endpoints (routed via API Gateway: /api/grc/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| GET | /api/grc/risks | List risk register | JWT/API Key |
+| POST | /api/grc/risks | Add risk entry | Admin JWT |
+| GET | /api/grc/risks/:id | Get risk details | JWT/API Key |
+| PUT | /api/grc/risks/:id | Update risk score/status | Admin JWT |
+| GET | /api/grc/controls | List security controls | JWT/API Key |
+| GET | /api/grc/compliance | Get compliance status | JWT/API Key |
+| GET | /api/grc/frameworks | List compliance frameworks | JWT/API Key |
+| GET | /api/grc/audits | List audit activities | JWT/API Key |
+| POST | /api/grc/audits | Create audit plan | Admin JWT |
+| GET | /api/grc/policies | List policies | JWT/API Key |
+| POST | /api/grc/policies | Create policy | Admin JWT |
+| GET | /api/grc/metrics | Get GRC metrics | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE grc_risks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  title VARCHAR(255) NOT NULL,
+  description TEXT,
+  category VARCHAR(100), -- cyber, operational, financial, compliance
+  inherent_score DECIMAL(5,2),
+  residual_score DECIMAL(5,2),
+  likelihood INT, -- 1-5
+  impact INT, -- 1-5
+  owner VARCHAR(255),
+  status VARCHAR(20) DEFAULT 'open', -- open, mitigating, closed
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE grc_controls (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  control_id VARCHAR(50) NOT NULL, -- e.g., "ISO-A.8.1"
+  framework VARCHAR(50), -- ISO27001, NIST, PCI-DSS
+  name VARCHAR(255) NOT NULL,
+  description TEXT,
+  status VARCHAR(20) DEFAULT 'compliant', -- compliant, non-compliant, partial
+  evidence JSONB,
+  last_assessed TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE grc_audits (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  audit_name VARCHAR(255) NOT NULL,
+  framework VARCHAR(50),
+  auditor VARCHAR(255),
+  status VARCHAR(20) DEFAULT 'planned', -- planned, in_progress, completed
+  findings_count INT DEFAULT 0,
+  start_date DATE,
+  end_date DATE,
+  report_url VARCHAR(500),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE grc_policies (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  title VARCHAR(255) NOT NULL,
+  version VARCHAR(20) DEFAULT '1.0',
+  content TEXT,
+  mandatory BOOLEAN DEFAULT true,
+  acceptance_required BOOLEAN DEFAULT false,
+  published_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE grc_user_attestations (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  user_id UUID NOT NULL, -- references IAM user
+  policy_id UUID REFERENCES grc_policies(id),
+  accepted_at TIMESTAMP DEFAULT NOW(),
+  ip_address INET
+);
+
+CREATE INDEX idx_grc_tenant ON grc_risks(tenant_id);
+```
+
+## 5. Service Integrations
+- Redis: Cache control frameworks, risk scores, compliance dashboards (TTL 1h)
+- RabbitMQ: Publish to `grc-events` queue (risk.high, compliance.violation, audit.finding, policy.attestation_required)
+- API Gateway: All endpoints routed through `/api/grc/*`
+- Risk Engine: Sync risk scores (HTTP to `risk-engine:8000`)
+- CSPM Service: Pull cloud compliance findings
+- Vulnerability Scanner: Map vulns to risk register
+- SIEM Service: Receive compliance violation alerts
+- Data Lake: Export compliance reports for audits
+- IAM Service: Validate tenant_id from JWT token, track user attestations
+
+## 6. Security Requirements
+- All endpoints protected by API Gateway OWASP policies
+- Tenant isolation: queries filtered by JWT tenant_id
+- Encrypt sensitive compliance data at rest
+- Audit logging: all risk/policy changes logged to `request_logs`
+- Role-based access: only GRC admins can modify controls/frameworks
+- mTLS for service-to-service communication
+- Data retention: comply with GDPR right-to-be-forgotten
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3007
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3007/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block (matches existing grc-service)
+```yaml
+grc:
+  platform: linux/amd64
+  build:
+    context: ./grc-service
+    dockerfile: Dockerfile
+  container_name: cybersec-grc
+  ports:
+    - "3007:3007"
+  environment:
+    NODE_ENV: production
+    PORT: 3007
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    RISK_ENGINE_URL: http://risk-engine:8000
+    CSPM_SERVICE_URL: http://cspm:3011
+    VULN_SCANNER_URL: http://vuln-scanner:3004
+    SIEM_SERVICE_URL: http://siem-soar:3003
+    DATA_LAKE_URL: http://data-lake:3017
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3007/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for risk scoring, control mapping logic
+- Health check: `GET /health` returns 200
+- Test risk creation: `POST /api/grc/risks` with valid JWT returns 201
+- Test compliance check: `GET /api/grc/compliance` returns framework status
+- Test tenant isolation: JWT from tenant A cannot access tenant B risks
+- Align with platform `test-platform.js` script

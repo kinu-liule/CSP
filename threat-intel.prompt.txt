@@ -1,0 +1,166 @@
+# Threat Intelligence Platform - Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Chart.js (threat feeds dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+Threat intelligence platform aggregating IOCs (Indicators of Compromise) from multiple sources (MITRE ATT&CK, OTX, VirusTotal, internal feeds), with correlation, scoring, and automated distribution to SIEM, EDR, WAF, and NGFW services.
+
+## 2. Core Requirements
+- Multi-source IOC ingestion (MISP, OTX, VirusTotal, internal threat hunts)
+- MITRE ATT&CK framework mapping for TTP (Tactics, Techniques, Procedures)
+- IOC scoring and reputation tracking with Redis caching
+- Automated distribution to security tools (push to WAF blocklists, EDR signatures)
+- Threat feed management with custom feed creation
+- Integration with SIEM for correlation and alerting
+- RabbitMQ event publishing for new IOCs, threat alerts
+
+## 3. API Endpoints (routed via API Gateway: /api/threat-intel/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| GET | /api/threat-intel/iocs | List IOCs with filters | JWT/API Key |
+| POST | /api/threat-intel/iocs | Submit new IOC | Admin JWT |
+| GET | /api/threat-intel/iocs/:id | Get IOC details | JWT/API Key |
+| PUT | /api/threat-intel/iocs/:id | Update IOC score/status | Admin JWT |
+| GET | /api/threat-intel/feeds | List threat feeds | JWT/API Key |
+| POST | /api/threat-intel/feeds | Add custom threat feed | Admin JWT |
+| GET | /api/threat-intel/ttps | Get MITRE ATT&CK mappings | JWT/API Key |
+| POST | /api/threat-intel/scan | Scan IOC against feeds | JWT/API Key |
+| GET | /api/threat-intel/metrics | Get threat intel metrics | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE threat_feeds (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(255) NOT NULL,
+  feed_type VARCHAR(50), -- misp, otx, virustotal, custom
+  url VARCHAR(500),
+  api_key_encrypted TEXT,
+  enabled BOOLEAN DEFAULT true,
+  last_sync TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE threat_iocs (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  ioc_type VARCHAR(50) NOT NULL, -- ip, domain, url, hash, email
+  ioc_value VARCHAR(500) NOT NULL,
+  threat_type VARCHAR(100), -- malware, phishing, c2, ransomware
+  severity VARCHAR(20),
+  confidence_score INT, -- 0-100
+  mitre_tactic VARCHAR(100),
+  mitre_technique VARCHAR(100),
+  source_feed UUID REFERENCES threat_feeds(id),
+  first_seen TIMESTAMP,
+  last_seen TIMESTAMP DEFAULT NOW(),
+  tags TEXT[],
+  UNIQUE(tenant_id, ioc_type, ioc_value)
+);
+
+CREATE TABLE ioc_matches (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id),
+  ioc_id UUID REFERENCES threat_iocs(id),
+  matched_in VARCHAR(50), -- waf, edr, siem, network
+  matched_at TIMESTAMP DEFAULT NOW(),
+  alert_generated BOOLEAN DEFAULT false
+);
+
+CREATE TABLE threat_campaigns (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(255),
+  description TEXT,
+  related_iocs UUID[], -- array of threat_iocs IDs
+  mitre_tactics TEXT[],
+  active BOOLEAN DEFAULT true,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_iocs_tenant_value ON threat_iocs(tenant_id, ioc_value);
+```
+
+## 5. Service Integrations
+- Redis: Cache IOCs for real-time lookups (TTL 1h), threat feed status
+- RabbitMQ: Publish to `threat-intel-events` queue (ioc.new, ioc.match, campaign.active)
+- API Gateway: All endpoints routed through `/api/threat-intel/*`
+- WAF Service: Push malicious IPs/domains to blocklists
+- NGFW Service: Update firewall rules with threat IOCs
+- EDR Service: Distribute IOC signatures for endpoint detection
+- SIEM Service: Send IOCs for correlation with security events
+- Risk Engine: Send IOCs for risk scoring (HTTP to `risk-engine:8000`)
+- IAM Service: Validate tenant_id from JWT token
+
+## 6. Security Requirements
+- All endpoints protected by API Gateway OWASP policies
+- Tenant isolation: queries filtered by JWT tenant_id
+- Encrypt feed API keys at rest (AES-256)
+- Audit logging: IOC submissions and feed changes logged to `request_logs`
+- Data validation: sanitize all IOC values to prevent injection
+- mTLS for service-to-service communication
+- Rate limiting on IOC submission endpoints
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3019
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3019/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block
+```yaml
+threat-intel:
+  platform: linux/amd64
+  build:
+    context: ./threat-intel-service
+    dockerfile: Dockerfile
+  container_name: cybersec-threat-intel
+  ports:
+    - "3019:3019"
+  environment:
+    NODE_ENV: production
+    PORT: 3019
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    WAF_SERVICE_URL: http://waf:3001
+    NGFW_SERVICE_URL: http://ngfw:3002
+    EDR_SERVICE_URL: http://edr:3015
+    SIEM_SERVICE_URL: http://siem-soar:3003
+    RISK_ENGINE_URL: http://risk-engine:8000
+    VIRUSTOTAL_API_KEY: ${VIRUSTOTAL_API_KEY}
+    OTX_API_KEY: ${OTX_API_KEY}
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3019/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for IOC validation, feed parsing, MITRE mapping
+- Health check: `GET /health` returns 200
+- Test IOC submission: `POST /api/threat-intel/iocs` with valid IOC returns 201
+- Test IOC lookup: `GET /api/threat-intel/iocs?ioc_value=1.2.3.4` returns match
+- Test tenant isolation: JWT from tenant A cannot access tenant B IOCs
+- Align with platform `test-platform.js` script

@@ -1,0 +1,19 @@
+{
+  "id": "payload-policy",
+  "name": "Payload Inspection Policy",
+  "description": "Inspect and validate request payloads",
+  "priority": 4,
+  "rules": [
+    {
+      "condition": "request.method in [\"POST\", \"PUT\", \"PATCH\"]",
+      "action": "validate_payload",
+      "parameters": {
+        "maxSize": "10mb",
+        "allowedContentTypes": [
+          "application/json",
+          "multipart/form-data"
+        ]
+      }
+    }
+  ]
+}

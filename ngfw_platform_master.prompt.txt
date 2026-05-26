@@ -1,0 +1,166 @@
+# NGFW Platform (Next-Generation Firewall) - Master Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Chart.js (dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+Next-Generation Firewall microservice providing deep packet inspection (DPI), application-aware filtering, IPS/IDS integration, geo-blocking, and real-time network threat prevention with integration to Threat Intelligence and SOAR services.
+
+## 2. Core Requirements
+- Stateful packet inspection with layer 7 (application layer) filtering
+- IPS/IDS integration (Suricata rules integration)
+- Application identification and control (detect/block specific apps)
+- Geo-blocking with country-level filtering (MaxMind DB integration)
+- NAT, port forwarding, and VPN tunnel management
+- Real-time traffic monitoring and logging to Data Lake
+- Integration with Threat Intel for malicious IP/domain blocking
+- Redis caching for active rules, IP reputation, traffic counters
+- RabbitMQ event publishing for blocked traffic, policy violations, DDoS detection
+
+## 3. API Endpoints (routed via API Gateway: /api/ngfw/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| GET | /api/ngfw/rules | List firewall rules | JWT/API Key |
+| POST | /api/ngfw/rules | Create firewall rule | Admin JWT |
+| PUT | /api/ngfw/rules/:id | Update firewall rule | Admin JWT |
+| DELETE | /api/ngfw/rules/:id | Delete firewall rule | Admin JWT |
+| GET | /api/ngfw/traffic | Get traffic logs | JWT/API Key |
+| GET | /api/ngfw/geo-blocks | List geo-blocking rules | JWT/API Key |
+| POST | /api/ngfw/geo-blocks | Add country block | Admin JWT |
+| GET | /api/ngfw/ips-signatures | List IPS signatures | JWT/API Key |
+| POST | /api/ngfw/ips-signatures | Update IPS rules | Admin JWT |
+| GET | /api/ngfw/metrics | Get NGFW metrics | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE ngfw_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(255) NOT NULL,
+  action VARCHAR(20) NOT NULL, -- allow, deny, log
+  source_ip CIDR[],
+  dest_ip CIDR[],
+  source_port INT[],
+  dest_port INT[],
+  protocol VARCHAR(20), -- tcp, udp, icmp, any
+  application VARCHAR(100), -- http, ssh, dns, custom
+  enabled BOOLEAN DEFAULT true,
+  priority INT DEFAULT 100,
+  created_at TIMESTAMP DEFAULT NOW(),
+  updated_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE ngfw_geo_blocks (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  country_code CHAR(2) NOT NULL, -- ISO 3166-1 alpha-2
+  action VARCHAR(20) DEFAULT 'deny', -- deny, alert
+  enabled BOOLEAN DEFAULT true,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE ngfw_traffic_logs (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id),
+  source_ip INET NOT NULL,
+  dest_ip INET NOT NULL,
+  source_port INT,
+  dest_port INT,
+  protocol VARCHAR(20),
+  action VARCHAR(20),
+  rule_id UUID REFERENCES ngfw_rules(id),
+  timestamp TIMESTAMP DEFAULT NOW(),
+  INDEX (tenant_id, timestamp DESC)
+);
+
+CREATE TABLE ngfw_ips_alerts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  signature_id VARCHAR(100), -- Suricata SID
+  severity VARCHAR(20),
+  source_ip INET,
+  dest_ip INET,
+  description TEXT,
+  action_taken VARCHAR(50),
+  timestamp TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_ngfw_rules_tenant ON ngfw_rules(tenant_id);
+```
+
+## 5. Service Integrations
+- Redis: Cache active rules, geo-IP lookups, traffic counters (TTL 1h)
+- RabbitMQ: Publish to `ngfw-events` queue (traffic.blocked, ips.alert, ddos.detected, geo.block_triggered)
+- API Gateway: All endpoints routed through `/api/ngfw/*`
+- Threat Intel Service: Pull malicious IPs for automatic blocking
+- SOAR Service: Trigger playbooks for IPS alerts, DDoS mitigation
+- Data Lake: Send traffic logs for long-term storage and analysis
+- IAM Service: Validate tenant_id from JWT token
+
+## 6. Security Requirements
+- All endpoints protected by API Gateway OWASP policies
+- Tenant isolation: queries filtered by JWT tenant_id
+- Encrypt sensitive rule configurations at rest
+- Audit logging: all rule changes logged to `request_logs`
+- Rate limiting on API to prevent rule flooding
+- mTLS for service-to-service communication
+- Default-deny policy: implicit deny all unless explicitly allowed
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3002
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3002/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block (matches existing ngfw-service)
+```yaml
+ngfw:
+  platform: linux/amd64
+  build:
+    context: ./ngfw-service
+    dockerfile: Dockerfile
+  container_name: cybersec-ngfw
+  ports:
+    - "3002:3002"
+  environment:
+    NODE_ENV: production
+    PORT: 3002
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    THREAT_INTEL_URL: http://threat-intel:3019
+    SOAR_SERVICE_URL: http://siem-soar:3003
+    DATA_LAKE_URL: http://data-lake:3017
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3002/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for rule evaluation engine, geo-IP lookups
+- Health check: `GET /health` returns 200
+- Test rule creation: `POST /api/ngfw/rules` with valid JWT returns 201
+- Test traffic blocking: simulate traffic matching deny rule, verify logged
+- Test tenant isolation: JWT from tenant A cannot access tenant B rules
+- Align with platform `test-platform.js` script

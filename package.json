@@ -1,0 +1,32 @@
+{
+  "name": "cybersec-platform",
+  "version": "1.0.0",
+  "description": "Multi-tenant, microservices-based Cybersecurity Platform",
+  "scripts": {
+    "install:all": "npm install && cd api-gateway && npm install && cd ../services/waf && npm install && cd ../ngfw && npm install && cd ../siem-soar && npm install && cd ../vuln-scanner && npm install && cd ../fraud-detection && npm install && cd ../awareness && npm install && cd ../grc && npm install && cd ../iam && npm install",
+    "start:gateway": "cd api-gateway && npm start",
+    "start:waf": "cd services/waf && npm start",
+    "start:ngfw": "cd services/ngfw && npm start",
+    "start:siem": "cd services/siem-soar && npm start",
+    "start:vuln": "cd services/vuln-scanner && npm start",
+    "start:fraud": "cd services/fraud-detection && npm start",
+    "start:awareness": "cd services/awareness && npm start",
+    "start:grc": "cd services/grc && npm start",
+    "start:iam": "cd services/iam && npm start",
+    "docker:up": "docker compose up -d",
+    "docker:down": "docker compose down",
+    "k8s:deploy": "kubectl apply -f deploy/kubernetes/",
+    "test": "node test-platform.js"
+  },
+  "keywords": [
+    "cybersecurity",
+    "microservices",
+    "multi-tenant"
+  ],
+  "author": "",
+  "license": "MIT",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "pg": "^8.20.0"
+  }
+}

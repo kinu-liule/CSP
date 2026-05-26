@@ -1,0 +1,156 @@
+# Fraud Detection Platform - Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Chart.js, React ChartJS 2 (dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+Microservice for real-time fraud detection and risk scoring using behavioral analytics, machine learning models, and integration with the Risk Engine (Python/FastAPI) for transaction monitoring, account takeover protection, and identity fraud prevention.
+
+## 2. Core Requirements
+- Real-time transaction/event scoring with Risk Engine integration
+- Behavioral analytics (login patterns, transaction velocity, geolocation)
+- Rule-based fraud detection (custom rules engine)
+- ML model integration for anomaly detection
+- Alert generation for high-risk activities
+- Integration with IAM for user risk profiling
+- Redis caching for risk scores, whitelists, blacklists
+- RabbitMQ event publishing for fraud alerts, high-risk transactions
+
+## 3. API Endpoints (routed via API Gateway: /api/fraud/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| POST | /api/fraud/score | Score transaction/event | Service JWT/API Key |
+| GET | /api/fraud/alerts | List fraud alerts | JWT/API Key |
+| GET | /api/fraud/alerts/:id | Get alert details | JWT/API Key |
+| PUT | /api/fraud/alerts/:id | Update alert status | JWT/API Key |
+| GET | /api/fraud/rules | List fraud detection rules | JWT/API Key |
+| POST | /api/fraud/rules | Create detection rule | Admin JWT |
+| GET | /api/fraud/whitelist | Get whitelisted entities | JWT/API Key |
+| POST | /api/fraud/whitelist | Add to whitelist | Admin JWT |
+| GET | /api/fraud/metrics | Get fraud metrics | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE fraud_alerts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  user_id UUID, -- references IAM user
+  transaction_id VARCHAR(255),
+  risk_score DECIMAL(5,2), -- 0-100
+  alert_type VARCHAR(100), -- account_takeover, payment_fraud, identity_theft
+  severity VARCHAR(20),
+  status VARCHAR(20) DEFAULT 'open', -- open, investigating, resolved, false_positive
+  event_data JSONB NOT NULL,
+  created_at TIMESTAMP DEFAULT NOW(),
+  resolved_at TIMESTAMP
+);
+
+CREATE TABLE fraud_rules (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(255) NOT NULL,
+  conditions JSONB NOT NULL, -- rule logic (amount > X, velocity > Y, etc.)
+  action VARCHAR(50), -- alert, block, review
+  enabled BOOLEAN DEFAULT true,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE fraud_whitelist (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  entity_type VARCHAR(50), -- ip, user, device, card_bin
+  entity_value VARCHAR(255) NOT NULL,
+  reason TEXT,
+  expires_at TIMESTAMP,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE fraud_scores (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id),
+  user_id UUID,
+  entity_id VARCHAR(255), -- transaction_id, session_id
+  score DECIMAL(5,2),
+  factors JSONB, -- contributing risk factors
+  timestamp TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_fraud_tenant ON fraud_alerts(tenant_id);
+```
+
+## 5. Service Integrations
+- Redis: Cache risk scores, whitelists, blacklists, rule evaluations (TTL 1h)
+- RabbitMQ: Publish to `fraud-events` queue (alert.created, transaction.high_risk, rule.triggered)
+- API Gateway: All endpoints routed through `/api/fraud/*`
+- Risk Engine: Send events for ML scoring (HTTP to `risk-engine:8000`)
+- IAM Service: Get user profiles, update user risk scores
+- SOAR Service: Trigger response playbooks for confirmed fraud
+- GRC Service: Map fraud risks to risk register
+- IAM Service: Validate tenant_id from JWT token
+
+## 6. Security Requirements
+- All endpoints protected by API Gateway OWASP policies
+- Tenant isolation: queries filtered by JWT tenant_id
+- Encrypt sensitive transaction data at rest
+- Audit logging: all scoring decisions and alerts logged to `request_logs`
+- Rate limiting on scoring endpoint to prevent abuse
+- mTLS for service-to-service communication
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3005
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3005/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block (matches existing fraud-detection-service)
+```yaml
+fraud-detection:
+  platform: linux/amd64
+  build:
+    context: ./fraud-detection-service
+    dockerfile: Dockerfile
+  container_name: cybersec-fraud
+  ports:
+    - "3005:3005"
+  environment:
+    NODE_ENV: production
+    PORT: 3005
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    RISK_ENGINE_URL: http://risk-engine:8000
+    IAM_SERVICE_URL: http://iam:3008
+    SOAR_SERVICE_URL: http://siem-soar:3003
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3005/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for rules engine, risk scoring logic
+- Health check: `GET /health` returns 200
+- Test scoring: `POST /api/fraud/score` with transaction data returns risk score
+- Test alert creation: high-risk score creates fraud alert
+- Test tenant isolation: JWT from tenant A cannot access tenant B alerts
+- Align with platform `test-platform.js` script

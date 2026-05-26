@@ -1,0 +1,149 @@
+# SIEM XDR Platform - Master Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Chart.js (security dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+SIEM (Security Information and Event Management) and XDR (Extended Detection and Response) platform combining log aggregation, real-time correlation, threat detection, and automated response across endpoints, network, and cloud.
+
+## 2. Core Requirements
+- Log ingestion from WAF, NGFW, EDR, cloud services via RabbitMQ
+- Real-time event correlation and rule-based alerting
+- MITRE ATT&CK mapping for detected threats
+- Integration with Threat Intel for IOC enrichment
+- Automated incident creation and SOAR playbook triggering
+- XDR capabilities: cross-layer detection (endpoint, network, cloud)
+- Redis caching for active alerts and correlation rules (TTL 1h)
+- Long-term log storage in Security Data Lake
+
+## 3. API Endpoints (routed via API Gateway: /api/siem-xdr/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| POST | /api/siem-xdr/logs | Ingest log entry | Service JWT |
+| GET | /api/siem-xdr/alerts | List alerts with filters | JWT/API Key |
+| GET | /api/siem-xdr/alerts/:id | Get alert details | JWT/API Key |
+| PUT | /api/siem-xdr/alerts/:id | Update alert status | JWT |
+| GET | /api/siem-xdr/incidents | List incidents | JWT/API Key |
+| POST | /api/siem-xdr/incidents | Create incident | JWT |
+| POST | /api/siem-xdr/correlate | Trigger correlation rules | Admin JWT |
+| GET | /api/siem-xdr/metrics | Get SIEM metrics | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE siem_logs (
+  id BIGSERIAL PRIMARY KEY,
+  tenant_id UUID REFERENCES tenants(id),
+  source_service VARCHAR(100),
+  log_level VARCHAR(20),
+  event_type VARCHAR(100),
+  source_ip INET,
+  dest_ip INET,
+  raw_log JSONB NOT NULL,
+  timestamp TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE siem_alerts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  alert_name VARCHAR(255),
+  severity VARCHAR(20),
+  mitre_tactic VARCHAR(100),
+  mitre_technique VARCHAR(100),
+  source_logs BIGINT[],
+  status VARCHAR(20) DEFAULT 'open',
+  assigned_to UUID REFERENCES users(id),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE xdr_detections (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  detection_type VARCHAR(50), -- endpoint, network, cloud
+  threat_score INT,
+  affected_asset UUID,
+  iocs UUID[],
+  response_action VARCHAR(100),
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_siem_logs_tenant_time ON siem_logs(tenant_id, timestamp);
+```
+
+## 5. Service Integrations
+- Redis: Cache correlation rules, active alerts (TTL 1h)
+- RabbitMQ: Consume from all service queues, publish to `siem-alerts`, `xdr-detections`
+- API Gateway: All endpoints routed through `/api/siem-xdr/*`
+- Threat Intel Service: Enrich IOCs in logs
+- SOAR Service: Trigger playbooks for high-severity alerts
+- XDR Service: Share detection data for extended visibility
+- Data Lake: Archive logs for long-term retention
+- EDR Service: Receive endpoint telemetry
+
+## 6. Security Requirements
+- Tenant isolation: queries filtered by JWT tenant_id
+- Encrypt sensitive log fields at rest
+- Audit logging for all alert/incident operations
+- Rate limiting on log ingestion (max 1000/minute per service)
+- mTLS for service-to-service communication
+- Data retention policies for compliance (GDPR, HIPAA)
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3003
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3003/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block
+```yaml
+siem-soar:
+  platform: linux/amd64
+  build:
+    context: ./siem-soar-service
+    dockerfile: Dockerfile
+  container_name: cybersec-siem
+  ports:
+    - "3003:3003"
+  environment:
+    NODE_ENV: production
+    PORT: 3003
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    THREAT_INTEL_URL: http://threat-intel:3019
+    SOAR_SERVICE_URL: http://soar:3018
+    XDR_SERVICE_URL: http://xdr:3020
+    DATA_LAKE_URL: http://data-lake:3017
+    EDR_SERVICE_URL: http://edr:3015
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3003/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for correlation engine, alert rules
+- Health check: `GET /health` returns 200
+- Test log ingestion: `POST /api/siem-xdr/logs` returns 201
+- Test alert creation: verify correlation triggers alerts
+- Test tenant isolation: JWT from tenant A cannot access tenant B alerts
+- Align with platform `test-platform.js` script

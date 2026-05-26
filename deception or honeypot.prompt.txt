@@ -1,0 +1,143 @@
+# Deception & Honeypot Platform - Prompt Specification
+## Tech Stack Alignment
+MUST USE APPROVED STACK:
+- Backend: Node.js 18, Express.js, PostgreSQL 16, Redis 7, RabbitMQ 3, JWT, bcryptjs
+- Frontend: React 18, React Router 6, Bootstrap 5, Chart.js (dashboard)
+- Infra: Docker (node:18-alpine), Docker Compose, Kubernetes, Nginx Alpine
+- Security: OWASP API Top 10, Helmet, Rate Limiting, JWT Auth via API Gateway
+
+## 1. Component Overview
+Microservice for deploying and managing deception technologies (honeypots, honeytokens, decoy systems) to detect, analyze, and alert on unauthorized access attempts and lateral movement in multi-tenant environments.
+
+## 2. Core Requirements
+- Honeypot deployment management (SSH, HTTP, database, file share honeypots)
+- Honeytoken generation (fake API keys, credentials, documents)
+- Real-time attack detection and alerting via RabbitMQ
+- Attack attribution and TTP (Tactics, Techniques, Procedures) analysis
+- Integration with SIEM for correlation and SOAR for automated response
+- Redis caching for active honeypot status and attack counters
+- Attacker interaction logging with full session capture
+
+## 3. API Endpoints (routed via API Gateway: /api/deception/*)
+| Method | Endpoint | Description | Auth |
+|--------|----------|-------------|------|
+| GET | /health | Health check | None |
+| GET | /api/deception/honeypots | List deployed honeypots | JWT/API Key |
+| POST | /api/deception/honeypots | Deploy new honeypot | Admin JWT |
+| GET | /api/deception/honeypots/:id | Get honeypot details | JWT/API Key |
+| PUT | /api/deception/honeypots/:id | Update honeypot config | Admin JWT |
+| DELETE | /api/deception/honeypots/:id | Remove honeypot | Admin JWT |
+| GET | /api/deception/attacks | List attack attempts | JWT/API Key |
+| GET | /api/deception/honeytokens | List honeytokens | JWT/API Key |
+| POST | /api/deception/honeytokens | Generate honeytoken | Admin JWT |
+| GET | /api/deception/metrics | Get deception metrics | JWT/API Key |
+
+## 4. Database Schema (PostgreSQL)
+```sql
+CREATE TABLE honeypots (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  name VARCHAR(255) NOT NULL,
+  type VARCHAR(50) NOT NULL, -- ssh, http, database, smb, custom
+  ip_address INET NOT NULL,
+  port INT NOT NULL,
+  status VARCHAR(20) DEFAULT 'active', -- active, inactive, error
+  config JSONB,
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE honeytokens (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  token_type VARCHAR(50), -- api_key, credential, document, database_record
+  token_value_encrypted TEXT NOT NULL, -- encrypted fake credential
+  decoy_location TEXT, -- where it's planted
+  status VARCHAR(20) DEFAULT 'active', -- active, triggered, revoked
+  created_at TIMESTAMP DEFAULT NOW()
+);
+
+CREATE TABLE attack_attempts (
+  id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+  tenant_id UUID REFERENCES tenants(id),
+  honeypot_id UUID REFERENCES honeypots(id),
+  honeytoken_id UUID REFERENCES honeytokens(id),
+  attacker_ip INET NOT NULL,
+  attacker_port INT,
+  attack_type VARCHAR(100),
+  ttp_mapping TEXT[], -- MITRE ATT&CK IDs
+  session_data JSONB, -- captured interaction
+  severity VARCHAR(20),
+  timestamp TIMESTAMP DEFAULT NOW()
+);
+
+CREATE INDEX idx_deception_tenant ON honeypots(tenant_id);
+```
+
+## 5. Service Integrations
+- Redis: Cache active honeypot list, attack counters, rate limiting
+- RabbitMQ: Publish to `deception-events` queue (attack.detected, honeytoken.triggered, ttp.identified)
+- API Gateway: All endpoints routed through `/api/deception/*`
+- SIEM Service: Forward attack data for correlation and threat scoring
+- SOAR Service: Trigger automated response playbooks (block IP, alert SOC)
+- IAM Service: Validate tenant_id from JWT token
+
+## 6. Security Requirements
+- All endpoints protected by API Gateway OWASP policies
+- Tenant isolation: queries filtered by JWT tenant_id
+- Encrypt honeytoken values at rest (AES-256)
+- Audit logging: all deployment/removal actions logged to `request_logs`
+- Isolate honeypot network traffic from production (separate VLAN/namespace)
+- mTLS for service-to-service communication
+
+## 7. Deployment
+### Dockerfile
+```dockerfile
+FROM node:18-alpine
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+EXPOSE 3013
+HEALTHCHECK --interval=30s --timeout=10s --retries=3 \
+  CMD node -e "require('http').get('http://localhost:3013/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"
+CMD ["node", "server.js"]
+```
+
+### Docker Compose Block
+```yaml
+deception:
+  platform: linux/amd64
+  build:
+    context: ./deception-service
+    dockerfile: Dockerfile
+  container_name: cybersec-deception
+  ports:
+    - "3013:3013"
+  environment:
+    NODE_ENV: production
+    PORT: 3013
+    DATABASE_URL: postgresql://cybersec:securepassword@postgres:5432/cybersec_platform
+    REDIS_URL: redis://redis:6379
+    RABBITMQ_URL: amqp://cybersec:securepassword@rabbitmq:5672
+    SIEM_SERVICE_URL: http://siem-soar:3003
+  depends_on:
+    postgres:
+      condition: service_healthy
+    redis:
+      condition: service_healthy
+  healthcheck:
+    test: ["CMD", "node", "-e", "require('http').get('http://localhost:3013/health', (r) => {process.exit(r.statusCode === 200 ? 0 : 1)})"]
+    interval: 30s
+    timeout: 10s
+    retries: 3
+  networks:
+    - cybersec-network
+```
+
+## 8. Testing
+- Jest unit tests for honeypot config validation, attack detection logic
+- Health check: `GET /health` returns 200
+- Test honeypot deployment: `POST /api/deception/honeypots` returns 201
+- Test attack detection: simulate attack, verify RabbitMQ event published
+- Test tenant isolation: JWT from tenant A cannot access tenant B honeypots
+- Align with platform `test-platform.js` script
